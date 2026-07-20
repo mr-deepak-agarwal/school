@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #FAFAF9;
+  --surface: #FFFFFF;
+  --text: #1C1C1E;
+  --muted: #6B6B70;
+  --border: #E4E4E7;
+  --primary: #2F5D8A;
+  --primary-dark: #234666;
+  --warn: #C2540B;
+  --warn-bg: #FBEBDD;
+  --success: #2F7A4F;
+  --success-bg: #E7F4EC;
+  --danger: #B3261E;
+  --danger-bg: #FBEAE9;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.input {
+  @apply w-full rounded-md border border-[var(--border)] px-3 py-2 text-sm outline-none;
+}
+.input:focus {
+  @apply border-[var(--primary)];
+}
