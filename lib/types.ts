@@ -44,6 +44,15 @@ export interface Substitution {
   substitute_teacher_id: string
 }
 
+export interface SlotNote {
+  id: number
+  timetable_id: number
+  date: string
+  note: string
+  updated_by: string | null
+  updated_at: string
+}
+
 export interface PreferredSub {
   id: number
   date: string

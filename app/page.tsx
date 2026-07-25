@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabaseClient'
 import { useCurrentTeacher } from '@/lib/useCurrentTeacher'
-import type { Substitution, TimetableSlot } from '@/lib/types'
+import type { SlotNote, Substitution, TimetableSlot } from '@/lib/types'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
@@ -21,12 +21,20 @@ const PERIODS = [
   { period: 10, start: '3:10', end: '4:00' },
 ]
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+// Formats a Date as YYYY-MM-DD using its *local* calendar fields.
+// (Deliberately not toISOString().slice(0,10) — that converts to UTC first,
+// which rolls a local midnight back to the previous day in timezones ahead
+// of UTC, e.g. IST. That was producing the Mon = 19 Jul / header = 20 Jul
+// mismatch.)
+function toISO(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
-function toISO(d: Date) {
-  return d.toISOString().slice(0, 10)
+function todayISO() {
+  return toISO(new Date())
 }
 
 // Monday of the week containing the given ISO date.
@@ -50,6 +58,12 @@ function formatRange(start: Date, end: Date) {
   return `${startStr} – ${endStr}`
 }
 
+// A note belongs to one specific class occurrence: this timetable slot on
+// this exact date, not "every Tuesday forever".
+function noteKey(timetableId: number, date: string) {
+  return `${timetableId}:${date}`
+}
+
 export default function TimetablePage() {
   return (
     <AppShell wide>
@@ -66,7 +80,12 @@ function TimetableContent() {
   const [subsIn, setSubsIn] = useState<(Substitution & { slot?: TimetableSlot })[]>([]) // periods I'm covering
   const [teacherMap, setTeacherMap] = useState<Record<string, string>>({})
   const [sectionMap, setSectionMap] = useState<Record<number, string>>({})
+  const [notes, setNotes] = useState<Record<string, SlotNote>>({})
   const [loading, setLoading] = useState(true)
+
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [draftNote, setDraftNote] = useState('')
+  const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null)
 
   const todayIso = todayISO()
   const weekStart = useMemo(() => weekStartOf(anchorDate), [anchorDate])
@@ -88,51 +107,63 @@ function TimetableContent() {
     loadLookups()
   }, [])
 
-  useEffect(() => {
+  async function loadWeek() {
     if (!teacher) return
+    setLoading(true)
 
-    async function loadWeek() {
-      setLoading(true)
+    // Timetable slots recur weekly, so we fetch by teacher only (not filtered
+    // to this week) and place each slot into its weekday/period cell below.
+    const { data: timetableRows } = await supabase
+      .from('timetable')
+      .select('*')
+      .eq('teacher_id', teacher.id)
+      .order('day')
+      .order('period')
 
-      // Timetable slots recur weekly, so we fetch by teacher only (not filtered
-      // to this week) and place each slot into its weekday/period cell below.
-      const { data: timetableRows } = await supabase
-        .from('timetable')
-        .select('*')
-        .eq('teacher_id', teacher!.id)
-        .order('day')
-        .order('period')
+    const { data: outgoing } = await supabase
+      .from('substitutions')
+      .select('*')
+      .gte('date', weekDates[0].date)
+      .lte('date', weekEndDate)
+      .eq('original_teacher_id', teacher.id)
 
-      const { data: outgoing } = await supabase
-        .from('substitutions')
-        .select('*')
-        .gte('date', weekDates[0].date)
-        .lte('date', weekEndDate)
-        .eq('original_teacher_id', teacher!.id)
+    const { data: incoming } = await supabase
+      .from('substitutions')
+      .select('*')
+      .gte('date', weekDates[0].date)
+      .lte('date', weekEndDate)
+      .eq('substitute_teacher_id', teacher.id)
 
-      const { data: incoming } = await supabase
-        .from('substitutions')
-        .select('*')
-        .gte('date', weekDates[0].date)
-        .lte('date', weekEndDate)
-        .eq('substitute_teacher_id', teacher!.id)
-
-      let incomingWithSlot: (Substitution & { slot?: TimetableSlot })[] = []
-      if (incoming && incoming.length > 0) {
-        const timetableIds = incoming.map((s) => s.timetable_id)
-        const { data: incomingSlots } = await supabase.from('timetable').select('*').in('id', timetableIds)
-        incomingWithSlot = incoming.map((s) => ({
-          ...s,
-          slot: incomingSlots?.find((slot) => slot.id === s.timetable_id),
-        }))
-      }
-
-      setSlots((timetableRows ?? []) as TimetableSlot[])
-      setSubsOut((outgoing ?? []) as Substitution[])
-      setSubsIn(incomingWithSlot)
-      setLoading(false)
+    let incomingWithSlot: (Substitution & { slot?: TimetableSlot })[] = []
+    if (incoming && incoming.length > 0) {
+      const timetableIds = incoming.map((s) => s.timetable_id)
+      const { data: incomingSlots } = await supabase.from('timetable').select('*').in('id', timetableIds)
+      incomingWithSlot = incoming.map((s) => ({
+        ...s,
+        slot: incomingSlots?.find((slot) => slot.id === s.timetable_id),
+      }))
     }
 
+    const ownIds = (timetableRows ?? []).map((s) => s.id)
+    const { data: noteRows } = ownIds.length
+      ? await supabase
+          .from('slot_notes')
+          .select('*')
+          .in('timetable_id', ownIds)
+          .gte('date', weekDates[0].date)
+          .lte('date', weekEndDate)
+      : { data: [] as SlotNote[] }
+
+    setSlots((timetableRows ?? []) as TimetableSlot[])
+    setSubsOut((outgoing ?? []) as Substitution[])
+    setSubsIn(incomingWithSlot)
+    setNotes(
+      Object.fromEntries((noteRows ?? []).map((n: any) => [noteKey(n.timetable_id, n.date), n as SlotNote]))
+    )
+    setLoading(false)
+  }
+
+  useEffect(() => {
     loadWeek()
     // weekDates is derived from weekStart, so depending on weekStart is sufficient
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,6 +203,47 @@ function TimetableContent() {
 
   function goToWeek(offset: number) {
     setAnchorDate(toISO(addDays(weekStart, offset * 7)))
+  }
+
+  function openNoteEditor(timetableId: number, date: string) {
+    const key = noteKey(timetableId, date)
+    setEditingKey(key)
+    setDraftNote(notes[key]?.note ?? '')
+  }
+
+  async function saveNote(timetableId: number, date: string) {
+    const key = noteKey(timetableId, date)
+    const trimmed = draftNote.trim()
+    setSavingNoteKey(key)
+
+    if (trimmed) {
+      const { data } = await supabase
+        .from('slot_notes')
+        .upsert(
+          {
+            timetable_id: timetableId,
+            date,
+            note: trimmed,
+            updated_by: teacher?.id ?? null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'timetable_id,date' }
+        )
+        .select()
+        .single()
+      if (data) setNotes((n) => ({ ...n, [key]: data as SlotNote }))
+    } else {
+      // Saving an empty note just clears it.
+      await supabase.from('slot_notes').delete().eq('timetable_id', timetableId).eq('date', date)
+      setNotes((n) => {
+        const next = { ...n }
+        delete next[key]
+        return next
+      })
+    }
+
+    setSavingNoteKey(null)
+    setEditingKey(null)
   }
 
   return (
@@ -257,7 +329,7 @@ function TimetableContent() {
                       </div>
                     </td>
                     {PERIODS.map((p) => {
-                      const ownSlot = slotsByDay[day]?.find((s) => s.period === p.period)
+                      const ownSlot = slotsByDay[day]?.find((s) => Number(s.period) === p.period)
                       const incoming = incomingByDateAndPeriod[date]?.[p.period]
 
                       if (incoming) {
@@ -292,17 +364,29 @@ function TimetableContent() {
 
                       const coveringSub = subsOutByDate[date]?.[ownSlot.id]
                       const isCovered = !!coveringSub
+                      const key = noteKey(ownSlot.id, date)
+                      const noteRow = notes[key]
+                      const isEditing = editingKey === key
 
                       return (
                         <td
                           key={p.period}
-                          className={`border-b border-r px-1.5 py-2 text-center align-top last:border-r-0 ${
+                          className={`relative border-b border-r px-1.5 py-2 text-center align-top last:border-r-0 ${
                             isCovered
                               ? 'border-[var(--warn)] bg-[var(--warn-bg)]'
                               : 'border-[var(--border-strong)]'
                           }`}
                         >
-                          <div className="truncate text-sm font-medium leading-tight" title={ownSlot.subject}>
+                          <button
+                            onClick={() => (isEditing ? setEditingKey(null) : openNoteEditor(ownSlot.id, date))}
+                            className="absolute right-0.5 top-0.5 rounded px-0.5 text-[11px] leading-none text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--primary)]"
+                            title={noteRow ? 'Edit note' : 'Add note'}
+                            aria-label={noteRow ? 'Edit note' : 'Add note'}
+                          >
+                            {noteRow ? '📝' : '✎'}
+                          </button>
+
+                          <div className="truncate pr-3 text-sm font-medium leading-tight" title={ownSlot.subject}>
                             {ownSlot.subject}
                           </div>
                           <div className="mt-1 truncate text-xs text-[var(--muted)]">
@@ -312,6 +396,44 @@ function TimetableContent() {
                             <div className="mt-1 truncate text-xs font-medium text-[var(--warn)]">
                               Covered by {teacherMap[coveringSub!.substitute_teacher_id] ?? 'another teacher'}
                             </div>
+                          )}
+
+                          {isEditing ? (
+                            <div className="mt-1.5 text-left">
+                              <textarea
+                                value={draftNote}
+                                onChange={(e) => setDraftNote(e.target.value)}
+                                rows={2}
+                                autoFocus
+                                placeholder="Add a note…"
+                                className="w-full resize-none rounded border border-[var(--border)] px-1 py-0.5 text-xs"
+                              />
+                              <div className="mt-1 flex justify-end gap-1">
+                                <button
+                                  onClick={() => setEditingKey(null)}
+                                  className="rounded px-1.5 py-0.5 text-[11px] text-[var(--muted)] hover:bg-[var(--surface)]"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => saveNote(ownSlot.id, date)}
+                                  disabled={savingNoteKey === key}
+                                  className="rounded bg-[var(--primary)] px-1.5 py-0.5 text-[11px] font-medium text-white disabled:opacity-60"
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            noteRow?.note && (
+                              <div
+                                onClick={() => openNoteEditor(ownSlot.id, date)}
+                                className="mt-1 cursor-pointer truncate text-[11px] italic text-[var(--muted)]"
+                                title={noteRow.note}
+                              >
+                                “{noteRow.note}”
+                              </div>
+                            )
                           )}
                         </td>
                       )
