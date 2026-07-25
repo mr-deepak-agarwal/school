@@ -57,17 +57,22 @@ export async function autoAssignSubstitutionsForLeave(
   const alreadyCoveredTimetableIds = new Set((existingSubs ?? []).map((s: any) => s.timetable_id as number))
 
   // period -> set of teacher ids already busy (regular class or an already-assigned sub duty)
+  // Keys are coerced to Number: Map lookups use strict identity, so a period
+  // stored as a numeric string in one row and a number in another would
+  // otherwise create two separate map entries instead of merging.
   const busyAtPeriod = new Map<number, Set<string>>()
   for (const t of (dayTimetable ?? []) as TimetableSlot[]) {
     if (!t.teacher_id) continue
-    if (!busyAtPeriod.has(t.period)) busyAtPeriod.set(t.period, new Set())
-    busyAtPeriod.get(t.period)!.add(t.teacher_id)
+    const period = Number(t.period)
+    if (!busyAtPeriod.has(period)) busyAtPeriod.set(period, new Set())
+    busyAtPeriod.get(period)!.add(String(t.teacher_id))
   }
   for (const s of (existingSubs ?? []) as any[]) {
     const row = timetableById[s.timetable_id]
     if (!row) continue
-    if (!busyAtPeriod.has(row.period)) busyAtPeriod.set(row.period, new Set())
-    busyAtPeriod.get(row.period)!.add(s.substitute_teacher_id)
+    const period = Number(row.period)
+    if (!busyAtPeriod.has(period)) busyAtPeriod.set(period, new Set())
+    busyAtPeriod.get(period)!.add(String(s.substitute_teacher_id))
   }
 
   const teacherList = ((teachers ?? []) as Teacher[]).slice().sort((a, b) => a.name.localeCompare(b.name))
@@ -79,11 +84,16 @@ export async function autoAssignSubstitutionsForLeave(
   for (const slot of slots as TimetableSlot[]) {
     if (alreadyCoveredTimetableIds.has(slot.id)) continue
 
-    if (!busyAtPeriod.has(slot.period)) busyAtPeriod.set(slot.period, new Set())
-    const busy = busyAtPeriod.get(slot.period)!
+    const slotPeriod = Number(slot.period)
+    if (!busyAtPeriod.has(slotPeriod)) busyAtPeriod.set(slotPeriod, new Set())
+    const busy = busyAtPeriod.get(slotPeriod)!
 
     const candidates = teacherList.filter(
-      (t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busy.has(t.id) && teacherTeachesSubject(t, slot.subject)
+      (t) =>
+        t.id !== slot.teacher_id &&
+        !onLeaveIds.has(t.id) &&
+        !busy.has(String(t.id)) &&
+        teacherTeachesSubject(t, slot.subject)
     )
 
     if (candidates.length === 0) {
@@ -94,7 +104,7 @@ export async function autoAssignSubstitutionsForLeave(
     const preferredMatch = candidates.find((t) => preferredIds.has(t.id))
     const chosen = preferredMatch ?? candidates[0]
 
-    busy.add(chosen.id)
+    busy.add(String(chosen.id))
     assigned.push({ slot, teacher: chosen, viaPreference: !!preferredMatch })
     toInsert.push({
       date,

@@ -93,16 +93,24 @@ function SubstitutionsContent() {
     for (const slot of slotsToCover) {
       // Teachers already committed at this exact period: either teaching their
       // own class, or already covering a different substitution for it.
+      // Compare periods as numbers, not with strict ===. Rows entered through
+      // the admin form and rows loaded any other way (bulk import, manual SQL,
+      // etc.) can come back from Supabase as a number in one place and a
+      // numeric string in another; a strict === silently fails to match those
+      // and lets an already-busy teacher slip through as "free".
+      const slotPeriod = Number(slot.period)
       const busyIds = new Set<string>()
       for (const row of dayTimetable) {
-        if (row.period === slot.period && row.teacher_id) busyIds.add(row.teacher_id)
+        if (Number(row.period) === slotPeriod && row.teacher_id) busyIds.add(String(row.teacher_id))
       }
       for (const [timetableId, subId] of Object.entries(existingSubs)) {
         const row = dayTimetable.find((r) => r.id === Number(timetableId))
-        if (row && row.period === slot.period) busyIds.add(subId)
+        if (row && Number(row.period) === slotPeriod) busyIds.add(String(subId))
       }
 
-      const eligible = teachers.filter((t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busyIds.has(t.id))
+      const eligible = teachers.filter(
+        (t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busyIds.has(String(t.id))
+      )
       const rank = (t: Teacher) => {
         const subjectMatch = teacherTeachesSubject(t, slot.subject)
         const isPreferred = preferredIds.has(t.id)

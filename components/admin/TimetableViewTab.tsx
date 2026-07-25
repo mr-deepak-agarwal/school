@@ -218,7 +218,7 @@ export default function TimetableViewTab() {
                   )}
                 </td>
                 {PERIODS.map((p) => {
-                  const slot = slots.find((s) => s.day === day && s.period === p.period)
+                  const slot = slots.find((s) => s.day === day && Number(s.period) === p.period)
                   if (!slot) {
                     return (
                       <td
