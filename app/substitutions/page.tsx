@@ -28,6 +28,7 @@ function SubstitutionsContent() {
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [preferred, setPreferred] = useState<PreferredSub[]>([])
   const [sectionMap, setSectionMap] = useState<Record<number, string>>({})
+  const [dayTimetable, setDayTimetable] = useState<TimetableSlot[]>([])
   const [teacherMap, setTeacherMap] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<number | null>(null)
 
@@ -47,7 +48,7 @@ function SubstitutionsContent() {
   }, [])
 
   async function loadDay() {
-    const { data: leaves } = await supabase.from('leave_register').select('*').eq('date', date)
+    const { data: leaves } = await supabase.from('leave_register').select('*').eq('date', date).eq('status', 'approved')
     setLeavesToday(leaves ?? [])
 
     const { data: pref } = await supabase
@@ -70,8 +71,12 @@ function SubstitutionsContent() {
       setSlotsToCover([])
     }
 
-    const { data: subs } = await supabase.from('substitutions').select('*').eq('date', date)
+    const [{ data: subs }, { data: dayRows }] = await Promise.all([
+      supabase.from('substitutions').select('*').eq('date', date),
+      supabase.from('timetable').select('*').eq('day', dayName),
+    ])
     setExistingSubs(Object.fromEntries((subs ?? []).map((s: any) => [s.timetable_id, s.substitute_teacher_id])))
+    setDayTimetable((dayRows ?? []) as TimetableSlot[])
   }
 
   useEffect(() => {
@@ -118,12 +123,30 @@ function SubstitutionsContent() {
         <ul className="space-y-3">
           {slotsToCover.map((slot) => {
             const assigned = existingSubs[slot.id]
-            const eligible = teachers.filter((t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id))
-            const sorted = [...eligible].sort((a, b) => {
-              const aPref = preferredIds.has(a.id) ? 0 : 1
-              const bPref = preferredIds.has(b.id) ? 0 : 1
-              return aPref - bPref
-            })
+
+            // Teachers already committed at this exact period: either teaching their
+            // own class, or already covering a different substitution for it.
+            const busyIds = new Set<string>()
+            for (const row of dayTimetable) {
+              if (row.period === slot.period && row.teacher_id) busyIds.add(row.teacher_id)
+            }
+            for (const [timetableId, subId] of Object.entries(existingSubs)) {
+              const row = dayTimetable.find((r) => r.id === Number(timetableId))
+              if (row && row.period === slot.period) busyIds.add(subId)
+            }
+
+            const eligible = teachers.filter(
+              (t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busyIds.has(t.id)
+            )
+            const rank = (t: (typeof eligible)[number]) => {
+              const subjectMatch = t.subjects?.includes(slot.subject)
+              const isPreferred = preferredIds.has(t.id)
+              if (subjectMatch && isPreferred) return 0
+              if (subjectMatch) return 1
+              if (isPreferred) return 2
+              return 3
+            }
+            const sorted = [...eligible].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
 
             return (
               <li key={slot.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -144,12 +167,17 @@ function SubstitutionsContent() {
                       className="flex-1 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
                     >
                       <option value="">Select substitute…</option>
-                      {sorted.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                          {preferredIds.has(t.id) ? ' (available)' : ''}
-                        </option>
-                      ))}
+                      {sorted.map((t) => {
+                        const tags = []
+                        if (t.subjects?.includes(slot.subject)) tags.push('teaches subject')
+                        if (preferredIds.has(t.id)) tags.push('available')
+                        return (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                            {tags.length ? ` (${tags.join(', ')})` : ''}
+                          </option>
+                        )
+                      })}
                     </select>
                     <button
                       onClick={() => assign(slot)}
