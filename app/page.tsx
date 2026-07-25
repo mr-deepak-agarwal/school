@@ -8,6 +8,19 @@ import type { Substitution, TimetableSlot } from '@/lib/types'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
+const PERIODS = [
+  { period: 1, start: '9:20', end: '9:55' },
+  { period: 2, start: '9:55', end: '10:30' },
+  { period: 3, start: '10:45', end: '11:20' },
+  { period: 4, start: '11:20', end: '11:55' },
+  { period: 5, start: '11:55', end: '12:30' },
+  { period: 6, start: '12:30', end: '1:05' },
+  { period: 7, start: '1:25', end: '2:00' },
+  { period: 8, start: '2:00', end: '2:35' },
+  { period: 9, start: '2:35', end: '3:10' },
+  { period: 10, start: '3:10', end: '4:00' },
+]
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
@@ -37,13 +50,9 @@ function formatRange(start: Date, end: Date) {
   return `${startStr} – ${endStr}`
 }
 
-function formatDayDate(iso: string) {
-  return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-}
-
 export default function TimetablePage() {
   return (
-    <AppShell>
+    <AppShell wide>
       <TimetableContent />
     </AppShell>
   )
@@ -86,7 +95,7 @@ function TimetableContent() {
       setLoading(true)
 
       // Timetable slots recur weekly, so we fetch by teacher only (not filtered
-      // to this week) and place each slot into its weekday column below.
+      // to this week) and place each slot into its weekday/period cell below.
       const { data: timetableRows } = await supabase
         .from('timetable')
         .select('*')
@@ -132,7 +141,7 @@ function TimetableContent() {
   const slotsByDay = useMemo(() => {
     const map: Record<string, TimetableSlot[]> = {}
     for (const day of DAYS) {
-      map[day] = slots.filter((s) => s.day === day).sort((a, b) => a.period - b.period)
+      map[day] = slots.filter((s) => s.day === day)
     }
     return map
   }, [slots])
@@ -148,18 +157,18 @@ function TimetableContent() {
     return map
   }, [subsOut])
 
-  const incomingByDate = useMemo(() => {
-    const map: Record<string, (Substitution & { slot?: TimetableSlot })[]> = {}
+  // Incoming coverage keyed by date + the period of the class being covered.
+  const incomingByDateAndPeriod = useMemo(() => {
+    const map: Record<string, Record<number, Substitution & { slot?: TimetableSlot }>> = {}
     for (const s of subsIn) {
-      if (!map[s.date]) map[s.date] = []
-      map[s.date].push(s)
+      if (!s.slot) continue
+      if (!map[s.date]) map[s.date] = {}
+      map[s.date][s.slot.period] = s
     }
     return map
   }, [subsIn])
 
-  const weekHasNothing =
-    !loading &&
-    weekDates.every(({ day, date }) => (slotsByDay[day]?.length ?? 0) === 0 && (incomingByDate[date]?.length ?? 0) === 0)
+  const weekHasNothing = !loading && slots.length === 0 && subsIn.length === 0
 
   function goToWeek(offset: number) {
     setAnchorDate(toISO(addDays(weekStart, offset * 7)))
@@ -206,77 +215,112 @@ function TimetableContent() {
       ) : weekHasNothing ? (
         <p className="text-sm text-[var(--muted)]">No periods scheduled this week.</p>
       ) : (
-        <div className="space-y-6">
-          {weekDates.map(({ day, date }) => {
-            const daySlots = slotsByDay[day] ?? []
-            const dayIncoming = incomingByDate[date] ?? []
-            const isToday = date === todayIso
-
-            if (daySlots.length === 0 && dayIncoming.length === 0) return null
-
-            return (
-              <div key={day}>
-                <div className="mb-2 flex items-center gap-2">
-                  <h2 className={`text-sm font-semibold ${isToday ? 'text-[var(--primary)]' : ''}`}>{day}</h2>
-                  <span className="text-xs text-[var(--muted)]">{formatDayDate(date)}</span>
-                  {isToday && (
-                    <span className="rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--primary)]">
-                      Today
-                    </span>
-                  )}
-                </div>
-
-                <ul className="space-y-3">
-                  {daySlots.map((slot) => {
-                    const coveringSub = subsOutByDate[date]?.[slot.id]
-                    const isCovered = !!coveringSub
-                    return (
-                      <li
-                        key={slot.id}
-                        className={`rounded-lg border p-4 ${
-                          isCovered
-                            ? 'border-[var(--warn)] bg-[var(--warn-bg)]'
-                            : 'border-[var(--border)] bg-[var(--surface)]'
+        <div className="overflow-x-auto rounded-lg border border-[var(--border-strong)]">
+          <table className="w-full table-fixed border-collapse text-sm">
+            <colgroup>
+              <col className="w-24" />
+              {PERIODS.map((p) => (
+                <col key={p.period} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr>
+                <th className="border-b border-r border-[var(--border-strong)] bg-[var(--surface)] px-2 py-2 text-left text-xs font-semibold uppercase text-[var(--muted)]">
+                  Day
+                </th>
+                {PERIODS.map((p) => (
+                  <th
+                    key={p.period}
+                    className="border-b border-r border-[var(--border-strong)] bg-[var(--surface)] px-1 py-2 text-center text-xs font-semibold uppercase text-[var(--muted)] last:border-r-0"
+                  >
+                    P{p.period}
+                    <div className="mt-0.5 text-[11px] font-normal normal-case text-[var(--muted)]">
+                      {p.start}–{p.end}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {weekDates.map(({ day, date }) => {
+                const isToday = date === todayIso
+                return (
+                  <tr key={day} className={isToday ? 'bg-[var(--primary)]/5' : undefined}>
+                    <td className="border-r border-b border-[var(--border-strong)] bg-[var(--surface)] px-2 py-2 text-xs font-semibold uppercase text-[var(--muted)]">
+                      {day.slice(0, 3)}
+                      <div
+                        className={`mt-0.5 text-[11px] font-normal normal-case ${
+                          isToday ? 'text-[var(--primary)]' : 'text-[var(--muted)]'
                         }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">Period {slot.period}</span>
-                          {slot.start_time && (
-                            <span className="text-xs text-[var(--muted)]">{slot.start_time.slice(0, 5)}</span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-base font-semibold">{slot.subject}</p>
-                        <p className="text-sm text-[var(--muted)]">Section {sectionMap[slot.section_id]}</p>
-                        {isCovered && (
-                          <p className="mt-2 text-sm font-medium text-[var(--warn)]">
-                            Covered by {teacherMap[coveringSub!.substitute_teacher_id] ?? 'another teacher'}
-                          </p>
-                        )}
-                      </li>
-                    )
-                  })}
-
-                  {dayIncoming.map((s) => (
-                    <li key={`in-${s.id}`} className="rounded-lg border border-[var(--primary)] bg-white p-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Period {s.slot?.period ?? '?'}</span>
-                        {s.slot?.start_time && (
-                          <span className="text-xs text-[var(--muted)]">{s.slot.start_time.slice(0, 5)}</span>
-                        )}
+                        {date}
                       </div>
-                      <p className="mt-1 text-base font-semibold">{s.slot?.subject}</p>
-                      <p className="text-sm text-[var(--muted)]">
-                        Section {s.slot ? sectionMap[s.slot.section_id] : ''}
-                      </p>
-                      <p className="mt-2 text-sm font-medium text-[var(--primary)]">
-                        Covering for {teacherMap[s.original_teacher_id] ?? 'a teacher'}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-          })}
+                    </td>
+                    {PERIODS.map((p) => {
+                      const ownSlot = slotsByDay[day]?.find((s) => s.period === p.period)
+                      const incoming = incomingByDateAndPeriod[date]?.[p.period]
+
+                      if (incoming) {
+                        return (
+                          <td
+                            key={p.period}
+                            className="border-b border-r border-[var(--primary)] bg-[var(--primary)]/5 px-1.5 py-2 text-center align-top last:border-r-0"
+                          >
+                            <div className="truncate text-sm font-medium leading-tight" title={incoming.slot?.subject}>
+                              {incoming.slot?.subject}
+                            </div>
+                            <div className="mt-1 truncate text-xs text-[var(--muted)]">
+                              {incoming.slot ? `Section ${sectionMap[incoming.slot.section_id] ?? ''}` : ''}
+                            </div>
+                            <div className="mt-1 truncate text-xs font-medium text-[var(--primary)]">
+                              Covering for {teacherMap[incoming.original_teacher_id] ?? 'a teacher'}
+                            </div>
+                          </td>
+                        )
+                      }
+
+                      if (!ownSlot) {
+                        return (
+                          <td
+                            key={p.period}
+                            className="border-b border-r border-[var(--border-strong)] px-1 py-2 text-center text-sm text-[var(--muted)] last:border-r-0"
+                          >
+                            —
+                          </td>
+                        )
+                      }
+
+                      const coveringSub = subsOutByDate[date]?.[ownSlot.id]
+                      const isCovered = !!coveringSub
+
+                      return (
+                        <td
+                          key={p.period}
+                          className={`border-b border-r px-1.5 py-2 text-center align-top last:border-r-0 ${
+                            isCovered
+                              ? 'border-[var(--warn)] bg-[var(--warn-bg)]'
+                              : 'border-[var(--border-strong)]'
+                          }`}
+                        >
+                          <div className="truncate text-sm font-medium leading-tight" title={ownSlot.subject}>
+                            {ownSlot.subject}
+                          </div>
+                          <div className="mt-1 truncate text-xs text-[var(--muted)]">
+                            Section {sectionMap[ownSlot.section_id] ?? ''}
+                          </div>
+                          {isCovered && (
+                            <div className="mt-1 truncate text-xs font-medium text-[var(--warn)]">
+                              Covered by {teacherMap[coveringSub!.substitute_teacher_id] ?? 'another teacher'}
+                            </div>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
