@@ -188,19 +188,25 @@ export default function TimetableTab() {
       </form>
 
       <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-20" />
+            {PERIODS.map((p) => (
+              <col key={p.period} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 border-b border-r border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--muted)]">
+              <th className="border-b border-r border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-left text-[11px] font-semibold uppercase text-[var(--muted)]">
                 Day
               </th>
               {PERIODS.map((p) => (
                 <th
                   key={p.period}
-                  className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-center text-xs font-semibold uppercase text-[var(--muted)]"
+                  className="border-b border-[var(--border)] bg-[var(--surface)] px-1 py-2 text-center text-[11px] font-semibold uppercase text-[var(--muted)]"
                 >
-                  Period {p.period}
-                  <div className="mt-0.5 text-[10px] font-normal normal-case text-[var(--muted)]">
+                  P{p.period}
+                  <div className="mt-0.5 text-[9px] font-normal normal-case text-[var(--muted)]">
                     {p.start}–{p.end}
                   </div>
                 </th>
@@ -210,8 +216,8 @@ export default function TimetableTab() {
           <tbody>
             {DAYS.map((day) => (
               <tr key={day}>
-                <td className="sticky left-0 z-10 border-r border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold uppercase text-[var(--muted)]">
-                  {day}
+                <td className="border-r border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-[11px] font-semibold uppercase text-[var(--muted)]">
+                  {day.slice(0, 3)}
                 </td>
                 {PERIODS.map((p) => {
                   const slot = slots.find((s) => s.day === day && s.period === p.period)
@@ -219,17 +225,19 @@ export default function TimetableTab() {
                     return (
                       <td
                         key={p.period}
-                        className="border-b border-[var(--border)] px-2 py-2 text-center text-xs text-[var(--muted)]"
+                        className="border-b border-[var(--border)] px-1 py-2 text-center text-xs text-[var(--muted)]"
                       >
                         —
                       </td>
                     )
                   }
                   return (
-                    <td key={p.period} className="border-b border-[var(--border)] px-2 py-2 align-top">
+                    <td key={p.period} className="border-b border-[var(--border)] px-1.5 py-2 align-top">
                       <div className="flex flex-col items-stretch gap-1">
                         <div className="flex items-start justify-between gap-1">
-                          <span className="text-sm font-medium leading-tight">{slot.subject}</span>
+                          <span className="truncate text-xs font-medium leading-tight" title={slot.subject}>
+                            {slot.subject}
+                          </span>
                           <button
                             onClick={() => removeSlot(slot.id)}
                             className="shrink-0 text-[10px] leading-none text-[var(--danger)]"
@@ -241,7 +249,7 @@ export default function TimetableTab() {
                         <select
                           value={slot.teacher_id ?? ''}
                           onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
-                          className="input py-0.5 text-[11px]"
+                          className="input w-full px-1 py-0.5 text-[10px]"
                         >
                           <option value="">Unassigned</option>
                           {teachers.map((t) => (

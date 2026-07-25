@@ -182,76 +182,82 @@ export default function TimetableViewTab() {
       ) : slots.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No periods found for this selection.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-          <table className="w-full min-w-[900px] border-collapse text-sm">
-            <thead>
-              <tr>
-                <th className="sticky left-0 z-10 border-b border-r border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--muted)]">
-                  Day
+      <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-24" />
+            {PERIODS.map((p) => (
+              <col key={p.period} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              <th className="border-b border-r border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-left text-[11px] font-semibold uppercase text-[var(--muted)]">
+                Day
+              </th>
+              {PERIODS.map((p) => (
+                <th
+                  key={p.period}
+                  className="border-b border-[var(--border)] bg-[var(--surface)] px-1 py-2 text-center text-[11px] font-semibold uppercase text-[var(--muted)]"
+                >
+                  P{p.period}
+                  <div className="mt-0.5 text-[9px] font-normal normal-case text-[var(--muted)]">
+                    {p.start}–{p.end}
+                  </div>
                 </th>
-                {PERIODS.map((p) => (
-                  <th
-                    key={p.period}
-                    className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-center text-xs font-semibold uppercase text-[var(--muted)]"
-                  >
-                    Period {p.period}
-                    <div className="mt-0.5 text-[10px] font-normal normal-case text-[var(--muted)]">
-                      {p.start}–{p.end}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {DAYS.map((day) => (
-                <tr key={day} className={day === todaysDayName ? 'bg-[var(--primary)]/5' : undefined}>
-                  <td className="sticky left-0 z-10 border-r border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold uppercase text-[var(--muted)]">
-                    {day}
-                    {day === todaysDayName && (
-                      <div className="mt-0.5 text-[10px] font-normal normal-case text-[var(--primary)]">
-                        {date}
-                      </div>
-                    )}
-                  </td>
-                  {PERIODS.map((p) => {
-                    const slot = slots.find((s) => s.day === day && s.period === p.period)
-                    if (!slot) {
-                      return (
-                        <td
-                          key={p.period}
-                          className="border-b border-[var(--border)] px-2 py-2 text-center text-xs text-[var(--muted)]"
-                        >
-                          —
-                        </td>
-                      )
-                    }
-
-                    const subId = day === todaysDayName ? subsByTimetableId[slot.id] : undefined
-                    const onLeave = day === todaysDayName && !!slot.teacher_id && leaveTeacherIds.has(slot.teacher_id)
-
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {DAYS.map((day) => (
+              <tr key={day} className={day === todaysDayName ? 'bg-[var(--primary)]/5' : undefined}>
+                <td className="border-r border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-[11px] font-semibold uppercase text-[var(--muted)]">
+                  {day.slice(0, 3)}
+                  {day === todaysDayName && (
+                    <div className="mt-0.5 text-[9px] font-normal normal-case text-[var(--primary)]">{date}</div>
+                  )}
+                </td>
+                {PERIODS.map((p) => {
+                  const slot = slots.find((s) => s.day === day && s.period === p.period)
+                  if (!slot) {
                     return (
-                      <td key={p.period} className="border-b border-[var(--border)] px-2 py-2 align-top">
-                        <div className="text-sm font-medium leading-tight">{slot.subject}</div>
-                        <div className="mt-1 text-[11px] text-[var(--muted)]">
-                          {mode === 'teacher'
-                            ? `Class ${sectionMap[slot.section_id] ?? ''}`
-                            : slot.teacher_id
-                              ? teacherMap[slot.teacher_id]
-                              : 'Unassigned'}
-                        </div>
-                        {onLeave && (
-                          <div className="mt-1 text-[11px] font-medium text-[var(--danger)]">
-                            {subId ? `Covered by ${teacherMap[subId] ?? 'substitute'}` : 'On leave — no sub assigned'}
-                          </div>
-                        )}
+                      <td
+                        key={p.period}
+                        className="border-b border-[var(--border)] px-1 py-2 text-center text-xs text-[var(--muted)]"
+                      >
+                        —
                       </td>
                     )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  }
+
+                  const subId = day === todaysDayName ? subsByTimetableId[slot.id] : undefined
+                  const onLeave = day === todaysDayName && !!slot.teacher_id && leaveTeacherIds.has(slot.teacher_id)
+
+                  return (
+                    <td key={p.period} className="border-b border-[var(--border)] px-1.5 py-2 align-top">
+                      <div className="truncate text-xs font-medium leading-tight" title={slot.subject}>
+                        {slot.subject}
+                      </div>
+                      <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
+                        {mode === 'teacher'
+                          ? `Class ${sectionMap[slot.section_id] ?? ''}`
+                          : slot.teacher_id
+                            ? teacherMap[slot.teacher_id]
+                            : 'Unassigned'}
+                      </div>
+                      {onLeave && (
+                        <div className="mt-1 truncate text-[10px] font-medium text-[var(--danger)]">
+                          {subId ? `Sub: ${teacherMap[subId] ?? '?'}` : 'On leave'}
+                        </div>
+                      )}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       )}
     </div>
   )

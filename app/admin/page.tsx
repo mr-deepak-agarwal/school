@@ -12,7 +12,7 @@ type Tab = (typeof TABS)[number]
 
 export default function AdminPage() {
   return (
-    <AppShell adminOnly>
+    <AppShell adminOnly wide>
       <AdminContent />
     </AppShell>
   )
