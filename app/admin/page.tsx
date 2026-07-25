@@ -5,8 +5,9 @@ import AppShell from '@/components/AppShell'
 import TeachersTab from '@/components/admin/TeachersTab'
 import SectionsTab from '@/components/admin/SectionsTab'
 import TimetableTab from '@/components/admin/TimetableTab'
+import TimetableViewTab from '@/components/admin/TimetableViewTab'
 
-const TABS = ['Teachers', 'Sections', 'Timetable'] as const
+const TABS = ['Teachers', 'Sections', 'Timetable', 'View Timetable'] as const
 type Tab = (typeof TABS)[number]
 
 export default function AdminPage() {
@@ -40,6 +41,7 @@ function AdminContent() {
       {tab === 'Teachers' && <TeachersTab />}
       {tab === 'Sections' && <SectionsTab />}
       {tab === 'Timetable' && <TimetableTab />}
+      {tab === 'View Timetable' && <TimetableViewTab />}
     </div>
   )
 }
