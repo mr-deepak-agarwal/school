@@ -131,7 +131,7 @@ function SubstitutionsContent() {
                   Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
                 </p>
                 <p className="mb-3 text-sm text-[var(--muted)]">
-                  Regular teacher: {teacherMap[slot.teacher_id]} (on leave)
+                  Regular teacher: {slot.teacher_id ? teacherMap[slot.teacher_id] : 'Unassigned'} (on leave)
                 </p>
 
                 {assigned ? (
