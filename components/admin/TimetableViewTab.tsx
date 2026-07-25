@@ -182,7 +182,7 @@ export default function TimetableViewTab() {
       ) : slots.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No periods found for this selection.</p>
       ) : (
-      <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+      <div className="overflow-x-auto rounded-lg border border-[var(--border-strong)]">
         <table className="w-full table-fixed border-collapse text-sm">
           <colgroup>
             <col className="w-24" />
@@ -192,16 +192,16 @@ export default function TimetableViewTab() {
           </colgroup>
           <thead>
             <tr>
-              <th className="border-b border-r border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-left text-[11px] font-semibold uppercase text-[var(--muted)]">
+              <th className="border-b border-r border-[var(--border-strong)] bg-[var(--surface)] px-2 py-2 text-left text-xs font-semibold uppercase text-[var(--muted)]">
                 Day
               </th>
               {PERIODS.map((p) => (
                 <th
                   key={p.period}
-                  className="border-b border-[var(--border)] bg-[var(--surface)] px-1 py-2 text-center text-[11px] font-semibold uppercase text-[var(--muted)]"
+                  className="border-b border-r border-[var(--border-strong)] bg-[var(--surface)] px-1 py-2 text-center text-xs font-semibold uppercase text-[var(--muted)] last:border-r-0"
                 >
                   P{p.period}
-                  <div className="mt-0.5 text-[9px] font-normal normal-case text-[var(--muted)]">
+                  <div className="mt-0.5 text-[11px] font-normal normal-case text-[var(--muted)]">
                     {p.start}–{p.end}
                   </div>
                 </th>
@@ -211,10 +211,10 @@ export default function TimetableViewTab() {
           <tbody>
             {DAYS.map((day) => (
               <tr key={day} className={day === todaysDayName ? 'bg-[var(--primary)]/5' : undefined}>
-                <td className="border-r border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-[11px] font-semibold uppercase text-[var(--muted)]">
+                <td className="border-r border-b border-[var(--border-strong)] bg-[var(--surface)] px-2 py-2 text-xs font-semibold uppercase text-[var(--muted)]">
                   {day.slice(0, 3)}
                   {day === todaysDayName && (
-                    <div className="mt-0.5 text-[9px] font-normal normal-case text-[var(--primary)]">{date}</div>
+                    <div className="mt-0.5 text-[11px] font-normal normal-case text-[var(--primary)]">{date}</div>
                   )}
                 </td>
                 {PERIODS.map((p) => {
@@ -223,7 +223,7 @@ export default function TimetableViewTab() {
                     return (
                       <td
                         key={p.period}
-                        className="border-b border-[var(--border)] px-1 py-2 text-center text-xs text-[var(--muted)]"
+                        className="border-b border-r border-[var(--border-strong)] px-1 py-2 text-center text-sm text-[var(--muted)] last:border-r-0"
                       >
                         —
                       </td>
@@ -234,11 +234,14 @@ export default function TimetableViewTab() {
                   const onLeave = day === todaysDayName && !!slot.teacher_id && leaveTeacherIds.has(slot.teacher_id)
 
                   return (
-                    <td key={p.period} className="border-b border-[var(--border)] px-1.5 py-2 align-top">
-                      <div className="truncate text-xs font-medium leading-tight" title={slot.subject}>
+                    <td
+                      key={p.period}
+                      className="border-b border-r border-[var(--border-strong)] px-1.5 py-2 text-center align-top last:border-r-0"
+                    >
+                      <div className="truncate text-sm font-medium leading-tight" title={slot.subject}>
                         {slot.subject}
                       </div>
-                      <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
+                      <div className="mt-1 truncate text-xs text-[var(--muted)]">
                         {mode === 'teacher'
                           ? `Class ${sectionMap[slot.section_id] ?? ''}`
                           : slot.teacher_id
@@ -246,7 +249,7 @@ export default function TimetableViewTab() {
                             : 'Unassigned'}
                       </div>
                       {onLeave && (
-                        <div className="mt-1 truncate text-[10px] font-medium text-[var(--danger)]">
+                        <div className="mt-1 truncate text-xs font-medium text-[var(--danger)]">
                           {subId ? `Sub: ${teacherMap[subId] ?? '?'}` : 'On leave'}
                         </div>
                       )}
