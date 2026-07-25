@@ -6,6 +6,19 @@ import type { Section, Teacher, TimetableSlot } from '@/lib/types'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
+const PERIODS = [
+  { period: 1, start: '9:20', end: '9:55' },
+  { period: 2, start: '9:55', end: '10:30' },
+  { period: 3, start: '10:45', end: '11:20' },
+  { period: 4, start: '11:20', end: '11:55' },
+  { period: 5, start: '11:55', end: '12:30' },
+  { period: 6, start: '12:30', end: '1:05' },
+  { period: 7, start: '1:25', end: '2:00' },
+  { period: 8, start: '2:00', end: '2:35' },
+  { period: 9, start: '2:35', end: '3:10' },
+  { period: 10, start: '3:10', end: '4:00' },
+]
+
 export default function TimetableTab() {
   const [sections, setSections] = useState<Section[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
@@ -52,13 +65,13 @@ export default function TimetableTab() {
   async function addSlot(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!sectionId || !form.period || !form.subject || !form.teacher_id) return
+    if (!sectionId || !form.period || !form.subject) return
 
     const { error } = await supabase.from('timetable').insert({
       day: form.day,
       period: Number(form.period),
       subject: form.subject,
-      teacher_id: form.teacher_id,
+      teacher_id: form.teacher_id || null,
       section_id: sectionId,
       start_time: form.start_time || null,
       end_time: form.end_time || null,
@@ -75,6 +88,14 @@ export default function TimetableTab() {
 
   async function removeSlot(id: number) {
     await supabase.from('timetable').delete().eq('id', id)
+    loadSlots()
+  }
+
+  async function updateSlotTeacher(id: number, teacherId: string) {
+    await supabase
+      .from('timetable')
+      .update({ teacher_id: teacherId || null })
+      .eq('id', id)
     loadSlots()
   }
 
@@ -126,14 +147,13 @@ export default function TimetableTab() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium">Teacher</label>
+          <label className="mb-1 block text-sm font-medium">Teacher (optional)</label>
           <select
-            required
             value={form.teacher_id}
             onChange={(e) => setForm({ ...form, teacher_id: e.target.value })}
             className="input"
           >
-            <option value="">Select…</option>
+            <option value="">Unassigned — allocate later</option>
             {teachers.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -167,33 +187,81 @@ export default function TimetableTab() {
         </div>
       </form>
 
-      <ul className="space-y-2">
-        {DAYS.map((day) => {
-          const daySlots = slots.filter((s) => s.day === day)
-          if (daySlots.length === 0) return null
-          return (
-            <li key={day}>
-              <p className="mb-2 text-xs font-semibold uppercase text-[var(--muted)]">{day}</p>
-              <ul className="mb-3 space-y-2">
-                {daySlots.map((s) => (
-                  <li
-                    key={s.id}
-                    className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm"
-                  >
-                    <span>
-                      Period {s.period} · {s.subject} · {teachers.find((t) => t.id === s.teacher_id)?.name ?? 'Unassigned'}
-                    </span>
-                    <button onClick={() => removeSlot(s.id)} className="text-xs text-[var(--danger)]">
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </li>
-          )
-        })}
-        {slots.length === 0 && <p className="text-sm text-[var(--muted)]">No periods added for this section yet.</p>}
-      </ul>
+      <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+        <table className="w-full min-w-[900px] border-collapse text-sm">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 border-b border-r border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left text-xs font-semibold uppercase text-[var(--muted)]">
+                Day
+              </th>
+              {PERIODS.map((p) => (
+                <th
+                  key={p.period}
+                  className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-center text-xs font-semibold uppercase text-[var(--muted)]"
+                >
+                  Period {p.period}
+                  <div className="mt-0.5 text-[10px] font-normal normal-case text-[var(--muted)]">
+                    {p.start}–{p.end}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {DAYS.map((day) => (
+              <tr key={day}>
+                <td className="sticky left-0 z-10 border-r border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold uppercase text-[var(--muted)]">
+                  {day}
+                </td>
+                {PERIODS.map((p) => {
+                  const slot = slots.find((s) => s.day === day && s.period === p.period)
+                  if (!slot) {
+                    return (
+                      <td
+                        key={p.period}
+                        className="border-b border-[var(--border)] px-2 py-2 text-center text-xs text-[var(--muted)]"
+                      >
+                        —
+                      </td>
+                    )
+                  }
+                  return (
+                    <td key={p.period} className="border-b border-[var(--border)] px-2 py-2 align-top">
+                      <div className="flex flex-col items-stretch gap-1">
+                        <div className="flex items-start justify-between gap-1">
+                          <span className="text-sm font-medium leading-tight">{slot.subject}</span>
+                          <button
+                            onClick={() => removeSlot(slot.id)}
+                            className="shrink-0 text-[10px] leading-none text-[var(--danger)]"
+                            title="Remove period"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <select
+                          value={slot.teacher_id ?? ''}
+                          onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
+                          className="input py-0.5 text-[11px]"
+                        >
+                          <option value="">Unassigned</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {slots.length === 0 && (
+        <p className="mt-3 text-sm text-[var(--muted)]">No periods added for this section yet.</p>
+      )}
     </div>
   )
 }

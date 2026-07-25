@@ -25,7 +25,7 @@ export interface TimetableSlot {
   end_time: string | null
   section_id: number
   subject: string
-  teacher_id: string
+  teacher_id: string | null
 }
 
 export interface LeaveRequest {
