@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient'
 import type { Teacher, TimetableSlot } from './types'
+import { teacherTeachesSubject } from './subjectMatch'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -82,7 +83,7 @@ export async function autoAssignSubstitutionsForLeave(
     const busy = busyAtPeriod.get(slot.period)!
 
     const candidates = teacherList.filter(
-      (t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busy.has(t.id) && t.subjects?.includes(slot.subject)
+      (t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busy.has(t.id) && teacherTeachesSubject(t, slot.subject)
     )
 
     if (candidates.length === 0) {

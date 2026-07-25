@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import AppShell from '@/components/AppShell'
 import { supabase } from '@/lib/supabaseClient'
 import type { LeaveRequest, PreferredSub, Teacher, TimetableSlot } from '@/lib/types'
+import { teacherTeachesSubject } from '@/lib/subjectMatch'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -86,6 +87,63 @@ function SubstitutionsContent() {
   const preferredIds = new Set(preferred.map((p) => p.teacher_id))
   const onLeaveIds = new Set(leavesToday.map((l) => l.teacher_id))
 
+  const candidatesBySlot = useMemo(() => {
+    const map = new Map<number, { list: Teacher[]; best: Teacher | null; bestIsConfident: boolean }>()
+
+    for (const slot of slotsToCover) {
+      // Teachers already committed at this exact period: either teaching their
+      // own class, or already covering a different substitution for it.
+      const busyIds = new Set<string>()
+      for (const row of dayTimetable) {
+        if (row.period === slot.period && row.teacher_id) busyIds.add(row.teacher_id)
+      }
+      for (const [timetableId, subId] of Object.entries(existingSubs)) {
+        const row = dayTimetable.find((r) => r.id === Number(timetableId))
+        if (row && row.period === slot.period) busyIds.add(subId)
+      }
+
+      const eligible = teachers.filter((t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busyIds.has(t.id))
+      const rank = (t: Teacher) => {
+        const subjectMatch = teacherTeachesSubject(t, slot.subject)
+        const isPreferred = preferredIds.has(t.id)
+        if (subjectMatch && isPreferred) return 0
+        if (subjectMatch) return 1
+        if (isPreferred) return 2
+        return 3
+      }
+      const sorted = [...eligible].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+      const best = sorted[0] ?? null
+      // Only worth auto-picking when the top match has some signal behind it
+      // (teaches the subject and/or explicitly marked themselves available) —
+      // not just "first free teacher alphabetically".
+      const bestIsConfident = best !== null && rank(best) <= 2
+
+      map.set(slot.id, { list: sorted, best, bestIsConfident })
+    }
+
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferred, leavesToday, date])
+
+  // Pre-select the best free match (subject teacher and/or someone who marked
+  // themselves available) so the admin usually just has to hit Assign.
+  useEffect(() => {
+    setAssignments((current) => {
+      let changed = false
+      const next = { ...current }
+      for (const slot of slotsToCover) {
+        if (existingSubs[slot.id]) continue
+        if (next[slot.id]) continue
+        const entry = candidatesBySlot.get(slot.id)
+        if (entry?.bestIsConfident && entry.best) {
+          next[slot.id] = entry.best.id
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }, [candidatesBySlot, slotsToCover, existingSubs])
+
   async function assign(slot: TimetableSlot) {
     const subId = assignments[slot.id]
     if (!subId) return
@@ -123,30 +181,9 @@ function SubstitutionsContent() {
         <ul className="space-y-3">
           {slotsToCover.map((slot) => {
             const assigned = existingSubs[slot.id]
-
-            // Teachers already committed at this exact period: either teaching their
-            // own class, or already covering a different substitution for it.
-            const busyIds = new Set<string>()
-            for (const row of dayTimetable) {
-              if (row.period === slot.period && row.teacher_id) busyIds.add(row.teacher_id)
-            }
-            for (const [timetableId, subId] of Object.entries(existingSubs)) {
-              const row = dayTimetable.find((r) => r.id === Number(timetableId))
-              if (row && row.period === slot.period) busyIds.add(subId)
-            }
-
-            const eligible = teachers.filter(
-              (t) => t.id !== slot.teacher_id && !onLeaveIds.has(t.id) && !busyIds.has(t.id)
-            )
-            const rank = (t: (typeof eligible)[number]) => {
-              const subjectMatch = t.subjects?.includes(slot.subject)
-              const isPreferred = preferredIds.has(t.id)
-              if (subjectMatch && isPreferred) return 0
-              if (subjectMatch) return 1
-              if (isPreferred) return 2
-              return 3
-            }
-            const sorted = [...eligible].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+            const entry = candidatesBySlot.get(slot.id)
+            const sorted = entry?.list ?? []
+            const isSuggested = !!entry?.bestIsConfident && assignments[slot.id] === entry.best?.id
 
             return (
               <li key={slot.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -160,33 +197,40 @@ function SubstitutionsContent() {
                 {assigned ? (
                   <p className="text-sm font-medium text-[var(--success)]">Assigned: {teacherMap[assigned]}</p>
                 ) : (
-                  <div className="flex gap-2">
-                    <select
-                      value={assignments[slot.id] ?? ''}
-                      onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
-                      className="flex-1 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
-                    >
-                      <option value="">Select substitute…</option>
-                      {sorted.map((t) => {
-                        const tags = []
-                        if (t.subjects?.includes(slot.subject)) tags.push('teaches subject')
-                        if (preferredIds.has(t.id)) tags.push('available')
-                        return (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                            {tags.length ? ` (${tags.join(', ')})` : ''}
-                          </option>
-                        )
-                      })}
-                    </select>
-                    <button
-                      onClick={() => assign(slot)}
-                      disabled={!assignments[slot.id] || saving === slot.id}
-                      className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                    >
-                      Assign
-                    </button>
-                  </div>
+                  <>
+                    <div className="flex gap-2">
+                      <select
+                        value={assignments[slot.id] ?? ''}
+                        onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
+                        className="flex-1 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
+                      >
+                        <option value="">Select substitute…</option>
+                        {sorted.map((t) => {
+                          const tags = []
+                          if (teacherTeachesSubject(t, slot.subject)) tags.push('teaches subject')
+                          if (preferredIds.has(t.id)) tags.push('available')
+                          return (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                              {tags.length ? ` (${tags.join(', ')})` : ''}
+                            </option>
+                          )
+                        })}
+                      </select>
+                      <button
+                        onClick={() => assign(slot)}
+                        disabled={!assignments[slot.id] || saving === slot.id}
+                        className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                      >
+                        Assign
+                      </button>
+                    </div>
+                    {isSuggested && (
+                      <p className="mt-1.5 text-xs text-[var(--muted)]">
+                        Suggested — free that period. Change the dropdown if you&rsquo;d rather pick someone else.
+                      </p>
+                    )}
+                  </>
                 )}
               </li>
             )
