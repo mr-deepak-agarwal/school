@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import type { PeriodSwap, Section, Teacher, TimetableSlot } from '@/lib/types'
+import type { PeriodSwap, PreferredSub, Section, Teacher, TimetableSlot } from '@/lib/types'
 import { teacherTeachesSection, teacherTeachesSubject } from '@/lib/subjectMatch'
 import { swapFor, swapPartner } from '@/lib/periodSwaps'
 import { todayISO, dayNameForDate } from '@/lib/periods'
@@ -20,7 +20,7 @@ export default function SubstitutionsTab() {
   const [absentSlots, setAbsentSlots] = useState<TimetableSlot[]>([])
   const [dayTimetable, setDayTimetable] = useState<TimetableSlot[]>([])
   const [existingSubs, setExistingSubs] = useState<Record<number, string>>({})
-  const [preferredIds, setPreferredIds] = useState<Set<string>>(new Set())
+  const [preferredRows, setPreferredRows] = useState<PreferredSub[]>([])
   const [swaps, setSwaps] = useState<PeriodSwap[]>([])
   const [assignments, setAssignments] = useState<Record<number, string>>({})
   const [saving, setSaving] = useState<number | null>(null)
@@ -56,14 +56,14 @@ export default function SubstitutionsTab() {
         supabase.from('timetable').select('*').eq('teacher_id', absentTeacherId).eq('day', dayName).order('period'),
         supabase.from('timetable').select('*').eq('day', dayName),
         supabase.from('substitutions').select('*').eq('date', date),
-        supabase.from('preferred_substitutions').select('teacher_id').eq('date', date).eq('preferred', true),
+        supabase.from('preferred_substitutions').select('*').eq('date', date).eq('preferred', true),
         supabase.from('period_swaps').select('*').eq('swap_date', date),
       ])
 
     setAbsentSlots((mySlots ?? []) as TimetableSlot[])
     setDayTimetable((dayRows ?? []) as TimetableSlot[])
     setExistingSubs(Object.fromEntries((subs ?? []).map((x: any) => [x.timetable_id, x.substitute_teacher_id])))
-    setPreferredIds(new Set((pref ?? []).map((x: any) => x.teacher_id)))
+    setPreferredRows((pref ?? []) as PreferredSub[])
     setSwaps((swapRows ?? []) as PeriodSwap[])
     setLoading(false)
   }
@@ -89,6 +89,7 @@ export default function SubstitutionsTab() {
         sameSection: Teacher[]
         other: Teacher[]
         suggested: Teacher | null
+        suggestedPrefId: number | null
       }
     >()
 
@@ -105,13 +106,20 @@ export default function SubstitutionsTab() {
 
       const eligible = teachers.filter((t) => t.id !== absentTeacherId && !busyIds.has(String(t.id)))
 
-      // Only teachers who actually teach this section (any subject, any
-      // period during the week) are real candidates — someone who's never
-      // in front of 7B shouldn't be a top pick just because they're free.
-      const teachesSection = (t: Teacher) => teacherTeachesSection(t.id, slot.section_id, fullTimetable)
+      // A teacher who explicitly marked themselves preferred for THIS exact
+      // section on this date — the strongest possible signal, regardless of
+      // whether they've historically taught this section.
+      const prefRowFor = (teacherId: string) =>
+        preferredRows.find((p) => p.teacher_id === teacherId && p.section_id === slot.section_id)
 
-      const preferredSection = eligible.filter((t) => preferredIds.has(t.id) && teachesSection(t))
+      const preferredSection = eligible.filter((t) => !!prefRowFor(t.id))
       const preferredSectionIds = new Set(preferredSection.map((t) => t.id))
+
+      // Only teachers who actually teach this section (any subject, any
+      // period during the week) count for the next two buckets — someone
+      // who's never in front of 7B shouldn't rank above the "other" pile
+      // just because they're free.
+      const teachesSection = (t: Teacher) => teacherTeachesSection(t.id, slot.section_id, fullTimetable)
 
       const sameSubject = eligible.filter(
         (t) => !preferredSectionIds.has(t.id) && teachesSection(t) && teacherTeachesSubject(t, slot.subject)
@@ -130,12 +138,13 @@ export default function SubstitutionsTab() {
       )
 
       const suggested = preferredSection[0] ?? sameSubject[0] ?? sameSection[0] ?? null
+      const suggestedPrefId = suggested ? prefRowFor(suggested.id)?.id ?? null : null
 
-      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, suggested })
+      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, suggested, suggestedPrefId })
     }
 
     return map
-  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferredIds, fullTimetable, absentTeacherId])
+  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferredRows, fullTimetable, absentTeacherId])
 
   // Pre-fill the dropdown with the top suggestion so admin usually just hits Assign.
   useEffect(() => {
@@ -163,6 +172,15 @@ export default function SubstitutionsTab() {
       { date, timetable_id: slot.id, original_teacher_id: slot.teacher_id, substitute_teacher_id: subId },
       { onConflict: 'date,timetable_id' }
     )
+
+    // If the teacher we just assigned had marked themselves preferred for
+    // this exact section on this date, that preference has now been used —
+    // clear it so it doesn't keep showing up as still-pending.
+    const usedPref = preferredRows.find((p) => p.teacher_id === subId && p.section_id === slot.section_id)
+    if (usedPref) {
+      await supabase.from('preferred_substitutions').delete().eq('id', usedPref.id)
+    }
+
     setSaving(null)
     loadForDate()
   }
@@ -229,7 +247,7 @@ export default function SubstitutionsTab() {
                       >
                         <option value="">Select substitute…</option>
                         {entry && entry.preferredSection.length > 0 && (
-                          <optgroup label="Preferred — teaches this section">
+                          <optgroup label="✓ Marked preferred for this section">
                             {entry.preferredSection.map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}

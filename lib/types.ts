@@ -57,6 +57,7 @@ export interface PreferredSub {
   id: number
   date: string
   teacher_id: string
+  section_id: number | null
   preferred: boolean
 }
 
