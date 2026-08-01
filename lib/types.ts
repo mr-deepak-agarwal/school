@@ -59,3 +59,14 @@ export interface PreferredSub {
   teacher_id: string
   preferred: boolean
 }
+
+// Two teachers trading periods with each other on a given date — no
+// substitute involved, each covers the other's class.
+export interface PeriodSwap {
+  id: number
+  swap_date: string
+  teacher_a: string
+  period_a: number
+  teacher_b: string
+  period_b: number
+}

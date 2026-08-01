@@ -3,26 +3,27 @@
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
 import { useCurrentTeacher } from '@/lib/useCurrentTeacher'
-import NavBar from './NavBar'
+import { supabase } from '@/lib/supabaseClient'
 
-export default function AppShell({
-  children,
-  adminOnly = false,
-  wide = false,
-}: {
-  children: React.ReactNode
-  adminOnly?: boolean
-  wide?: boolean
-}) {
+// Admin-only app: any signed-in non-admin is bounced back to login rather
+// than shown a page meant for admins.
+export default function AppShell({ children }: { children: React.ReactNode }) {
   const { teacher, loading } = useCurrentTeacher()
   const router = useRouter()
 
   useEffect(() => {
     if (!loading && !teacher) router.replace('/login')
-    if (!loading && teacher && adminOnly && teacher.role !== 'admin') router.replace('/')
-  }, [loading, teacher, adminOnly, router])
+    if (!loading && teacher && teacher.role !== 'admin') {
+      supabase.auth.signOut().then(() => router.replace('/login'))
+    }
+  }, [loading, teacher, router])
 
-  if (loading || !teacher) {
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    router.push('/login')
+  }
+
+  if (loading || !teacher || teacher.role !== 'admin') {
     return (
       <div className="flex h-screen items-center justify-center text-sm text-[var(--muted)]">
         Loading…
@@ -32,8 +33,13 @@ export default function AppShell({
 
   return (
     <div>
-      <NavBar role={teacher.role} />
-      <main className={`mx-auto px-4 py-6 ${wide ? 'max-w-[1600px]' : 'max-w-2xl'}`}>{children}</main>
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+        <span className="text-sm font-semibold">School Timetable — Admin</span>
+        <button onClick={handleSignOut} className="text-sm text-[var(--muted)] hover:text-[var(--text)]">
+          Sign out
+        </button>
+      </header>
+      <main className="mx-auto max-w-[1600px] px-4 py-6">{children}</main>
     </div>
   )
 }
