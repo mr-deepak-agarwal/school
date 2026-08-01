@@ -83,7 +83,13 @@ export default function SubstitutionsTab() {
   const candidatesBySlot = useMemo(() => {
     const map = new Map<
       number,
-      { preferredSection: Teacher[]; sameSubject: Teacher[]; other: Teacher[]; suggested: Teacher | null }
+      {
+        preferredSection: Teacher[]
+        sameSubject: Teacher[]
+        sameSection: Teacher[]
+        other: Teacher[]
+        suggested: Teacher | null
+      }
     >()
 
     for (const slot of slotsToCover) {
@@ -99,17 +105,33 @@ export default function SubstitutionsTab() {
 
       const eligible = teachers.filter((t) => t.id !== absentTeacherId && !busyIds.has(String(t.id)))
 
-      const preferredSection = eligible.filter(
-        (t) => preferredIds.has(t.id) && teacherTeachesSection(t.id, slot.section_id, fullTimetable)
-      )
+      // Only teachers who actually teach this section (any subject, any
+      // period during the week) are real candidates — someone who's never
+      // in front of 7B shouldn't be a top pick just because they're free.
+      const teachesSection = (t: Teacher) => teacherTeachesSection(t.id, slot.section_id, fullTimetable)
+
+      const preferredSection = eligible.filter((t) => preferredIds.has(t.id) && teachesSection(t))
       const preferredSectionIds = new Set(preferredSection.map((t) => t.id))
-      const sameSubject = eligible.filter((t) => !preferredSectionIds.has(t.id) && teacherTeachesSubject(t, slot.subject))
+
+      const sameSubject = eligible.filter(
+        (t) => !preferredSectionIds.has(t.id) && teachesSection(t) && teacherTeachesSubject(t, slot.subject)
+      )
       const sameSubjectIds = new Set(sameSubject.map((t) => t.id))
-      const other = eligible.filter((t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id))
 
-      const suggested = preferredSection[0] ?? sameSubject[0] ?? null
+      const sameSection = eligible.filter(
+        (t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && teachesSection(t)
+      )
+      const sameSectionIds = new Set(sameSection.map((t) => t.id))
 
-      map.set(slot.id, { preferredSection, sameSubject, other, suggested })
+      // Last-resort fallback: free, but doesn't teach this section at all.
+      // Kept so admin is never fully stuck, but never auto-suggested.
+      const other = eligible.filter(
+        (t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && !sameSectionIds.has(t.id)
+      )
+
+      const suggested = preferredSection[0] ?? sameSubject[0] ?? sameSection[0] ?? null
+
+      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, suggested })
     }
 
     return map
@@ -216,7 +238,7 @@ export default function SubstitutionsTab() {
                           </optgroup>
                         )}
                         {entry && entry.sameSubject.length > 0 && (
-                          <optgroup label="Teaches this subject">
+                          <optgroup label="Teaches this subject to this section">
                             {entry.sameSubject.map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}
@@ -224,8 +246,17 @@ export default function SubstitutionsTab() {
                             ))}
                           </optgroup>
                         )}
+                        {entry && entry.sameSection.length > 0 && (
+                          <optgroup label="Teaches this section (other subject)">
+                            {entry.sameSection.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
                         {entry && entry.other.length > 0 && (
-                          <optgroup label="Other free teachers">
+                          <optgroup label="⚠ Doesn't teach this section — emergency only">
                             {entry.other.map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}
