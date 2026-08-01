@@ -56,7 +56,7 @@ export default function SubstitutionsTab() {
         supabase.from('timetable').select('*').eq('teacher_id', absentTeacherId).eq('day', dayName).order('period'),
         supabase.from('timetable').select('*').eq('day', dayName),
         supabase.from('substitutions').select('*').eq('date', date),
-        supabase.from('preferred_substitutions').select('*').eq('date', date).eq('preferred', true),
+        supabase.from('preferred_substitutions').select('*').eq('preferred', true).eq('fulfilled', false),
         supabase.from('period_swaps').select('*').eq('swap_date', date),
       ])
 
@@ -107,8 +107,9 @@ export default function SubstitutionsTab() {
       const eligible = teachers.filter((t) => t.id !== absentTeacherId && !busyIds.has(String(t.id)))
 
       // A teacher who explicitly marked themselves preferred for THIS exact
-      // section on this date — the strongest possible signal, regardless of
-      // whether they've historically taught this section.
+      // section (and hasn't already used that preference) — the strongest
+      // possible signal, regardless of whether they've historically taught
+      // this section.
       const prefRowFor = (teacherId: string) =>
         preferredRows.find((p) => p.teacher_id === teacherId && p.section_id === slot.section_id)
 
@@ -174,11 +175,12 @@ export default function SubstitutionsTab() {
     )
 
     // If the teacher we just assigned had marked themselves preferred for
-    // this exact section on this date, that preference has now been used —
-    // clear it so it doesn't keep showing up as still-pending.
+    // this exact section, that preference has now been used — flag it as
+    // fulfilled (rather than deleting it) so it's kept as a record but no
+    // longer bumps this teacher to the top of the list for that section.
     const usedPref = preferredRows.find((p) => p.teacher_id === subId && p.section_id === slot.section_id)
     if (usedPref) {
-      await supabase.from('preferred_substitutions').delete().eq('id', usedPref.id)
+      await supabase.from('preferred_substitutions').update({ fulfilled: true }).eq('id', usedPref.id)
     }
 
     setSaving(null)

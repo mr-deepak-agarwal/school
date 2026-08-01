@@ -55,10 +55,13 @@ export interface SlotNote {
 
 export interface PreferredSub {
   id: number
-  date: string
   teacher_id: string
-  section_id: number | null
+  section_id: number
   preferred: boolean
+  // Set to true once this preference has actually been used to cover a
+  // substitution for that teacher/section — kept as a record rather than
+  // deleted, and no longer counts toward suggesting that teacher again.
+  fulfilled: boolean
 }
 
 // Two teachers trading periods with each other on a given date — no
