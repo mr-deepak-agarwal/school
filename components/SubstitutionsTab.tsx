@@ -68,7 +68,6 @@ export default function SubstitutionsTab() {
   const [swaps, setSwaps] = useState<PeriodSwap[]>([])
   const [assignments, setAssignments] = useState<Record<number, string>>({})
   const [editingSlotId, setEditingSlotId] = useState<number | null>(null)
-  const [expandedSlots, setExpandedSlots] = useState<Set<number>>(new Set())
   const [autoPreferredNotes, setAutoPreferredNotes] = useState<Record<number, string>>({})
   const [saving, setSaving] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
@@ -369,10 +368,9 @@ export default function SubstitutionsTab() {
     })
   }, [candidatesBySlot, slotsToCover, existingSubs])
 
-  async function assign(slot: TimetableSlot, subIdOverride?: string) {
-    const subId = subIdOverride ?? assignments[slot.id]
+  async function assign(slot: TimetableSlot) {
+    const subId = assignments[slot.id]
     if (!subId) return
-    if (subIdOverride) setAssignments((a) => ({ ...a, [slot.id]: subIdOverride }))
     setSaving(slot.id)
     await supabase.from('substitutions').upsert(
       { date, timetable_id: slot.id, original_teacher_id: slot.teacher_id, substitute_teacher_id: subId },
@@ -641,92 +639,70 @@ export default function SubstitutionsTab() {
                     </div>
                   ) : (
                     <div className="mt-auto">
-                      {/* One tap assigns — no dropdown, no separate Assign click.
-                          Best-fit candidates first; the top pick is highlighted. */}
-                      {(() => {
-                        const isBusy = saving === slot.id
-                        const expanded = expandedSlots.has(slot.id)
-                        const ranked = entry
-                          ? [...entry.preferredSection, ...entry.sameSubject, ...entry.sameSection]
-                          : []
-                        const hasMore = !!entry && entry.other.length > 0
-
-                        const tierLabel = (t: Teacher) => {
-                          if (entry?.preferredSection.some((x) => x.id === t.id)) return 'Preferred'
-                          if (entry?.sameSubject.some((x) => x.id === t.id)) return 'Same subject'
-                          return 'Teaches this class'
-                        }
-
-                        const PickButton = ({ t, suggested }: { t: Teacher; suggested?: boolean }) => (
-                          <button
-                            key={t.id}
-                            onClick={() => assign(slot, t.id)}
-                            disabled={isBusy}
-                            className={suggested ? 'pick-btn-suggested' : 'pick-btn'}
-                          >
-                            {suggested && <span aria-hidden>★</span>}
-                            {t.name}
-                            <span className="font-normal text-[var(--muted)]">
-                              · {tierLabel(t)}
-                              {entry?.overCapacityIds.has(t.id) ? ' · over limit' : ''}
-                            </span>
+                      <select
+                        value={assignments[slot.id] ?? ''}
+                        onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
+                        className="input"
+                      >
+                        <option value="">Select substitute…</option>
+                        {entry && entry.preferredSection.length > 0 && (
+                          <optgroup label="✓ Marked preferred for this section">
+                            {entry.preferredSection.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {entry && entry.sameSubject.length > 0 && (
+                          <optgroup label="Teaches this subject to this section">
+                            {entry.sameSubject.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {entry && entry.sameSection.length > 0 && (
+                          <optgroup label="Teaches this section (other subject)">
+                            {entry.sameSection.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {entry && entry.other.length > 0 && (
+                          <optgroup label="⚠ Doesn't teach this section — emergency only">
+                            {entry.other.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() => assign(slot)}
+                          disabled={!assignments[slot.id] || saving === slot.id}
+                          className="btn-primary flex-1"
+                        >
+                          {isEditing ? 'Save' : 'Assign'}
+                        </button>
+                        {isEditing && (
+                          <button onClick={() => setEditingSlotId(null)} className="btn-secondary">
+                            Cancel
                           </button>
-                        )
-
-                        if (ranked.length === 0 && !hasMore) {
-                          return <p className="text-sm text-[var(--muted)]">No free teacher found for this period.</p>
-                        }
-
-                        return (
-                          <>
-                            <div className="flex flex-wrap gap-1.5">
-                              {ranked.map((t) => (
-                                <PickButton key={t.id} t={t} suggested={entry?.suggested?.id === t.id} />
-                              ))}
-                            </div>
-
-                            {(hasMore || isEditing) && (
-                              <button
-                                onClick={() =>
-                                  setExpandedSlots((prev) => {
-                                    const next = new Set(prev)
-                                    next.has(slot.id) ? next.delete(slot.id) : next.add(slot.id)
-                                    return next
-                                  })
-                                }
-                                className="mt-2 text-xs font-semibold text-[var(--muted)] hover:text-[var(--primary)]"
-                              >
-                                {expanded ? '– Hide other teachers' : 'Not free / no fit? Show all →'}
-                              </button>
-                            )}
-
-                            {expanded && (
-                              <div className="mt-2 flex flex-wrap gap-1.5 animate-fade-in">
-                                {entry?.other.map((t) => (
-                                  <button
-                                    key={t.id}
-                                    onClick={() => assign(slot, t.id)}
-                                    disabled={isBusy}
-                                    className="pick-btn-warn"
-                                  >
-                                    {t.name}
-                                    <span className="font-normal">
-                                      · doesn&rsquo;t teach this class
-                                      {entry?.overCapacityIds.has(t.id) ? ' · over limit' : ''}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            {isEditing && (
-                              <button onClick={() => setEditingSlotId(null)} className="btn-secondary btn-sm mt-2">
-                                Cancel
-                              </button>
-                            )}
-                          </>
-                        )
-                      })()}
+                        )}
+                      </div>
+                      {!!entry?.suggested && assignments[slot.id] === entry.suggested.id && (
+                        <p className="mt-1.5 text-xs text-[var(--muted)]">Suggested — free that period.</p>
+                      )}
                     </div>
                   )}
                 </div>

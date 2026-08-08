@@ -104,7 +104,7 @@ select.input {
 /* ---------- chips / badges ---------- */
 
 .chip {
-  @apply inline-flex items-center gap-1.5 rounded-full border-2 border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-semibold transition-all;
+  @apply inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-1.5 text-sm font-semibold transition-all;
 }
 .chip-active {
   @apply border-[var(--ink)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)];
@@ -114,34 +114,22 @@ select.input {
 }
 
 .badge {
-  @apply inline-flex items-center rounded-md border-2 px-2 py-0.5 text-[11px] font-bold;
+  @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold;
 }
 .badge-success {
-  @apply badge border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)];
+  @apply badge bg-[var(--success-bg)] text-[var(--success)];
 }
 .badge-warn {
-  @apply badge border-[var(--warn)] bg-[var(--warn-bg)] text-[var(--warn)];
+  @apply badge bg-[var(--warn-bg)] text-[var(--warn)];
 }
 .badge-danger {
-  @apply badge border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)];
+  @apply badge bg-[var(--danger-bg)] text-[var(--danger)];
 }
 .badge-accent {
-  @apply badge border-[var(--accent)] bg-[var(--accent-tint)] text-[var(--accent)];
+  @apply badge bg-[var(--accent-tint)] text-[var(--accent)];
 }
 .badge-muted {
-  @apply badge border-[var(--border)] bg-[var(--surface-sunken)] text-[var(--muted)];
-}
-
-/* ---------- one-tap candidate picks (Substitutions tab) ---------- */
-
-.pick-btn {
-  @apply inline-flex items-center gap-1.5 rounded-md border-2 border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold text-[var(--text)] shadow-[var(--shadow-press)] transition-all hover:border-[var(--primary)] hover:bg-[var(--surface-sunken)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50;
-}
-.pick-btn-suggested {
-  @apply pick-btn border-[var(--ink)] bg-[var(--primary-tint)] text-[var(--primary-dark)] shadow-[var(--shadow-sm)] hover:bg-[var(--primary-tint)];
-}
-.pick-btn-warn {
-  @apply pick-btn border-dashed border-[var(--warn)] text-[var(--warn)] hover:bg-[var(--warn-bg)];
+  @apply badge bg-[var(--surface-sunken)] text-[var(--muted)];
 }
 
 /* ---------- misc ---------- */
