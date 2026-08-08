@@ -11,7 +11,6 @@ import SetupTab from '@/components/SetupTab'
 import TeacherHome from '@/components/TeacherHome'
 import TeacherLeavePanel from '@/components/TeacherLeavePanel'
 import TeacherPreferredPanel from '@/components/TeacherPreferredPanel'
-import CommandPalette, { type CommandAction } from '@/components/CommandPalette'
 import type { Teacher } from '@/lib/types'
 
 const TABS = ['Overview', 'Substitutions', 'Preferred Periods', 'Swapped Periods', 'Timetable', 'Setup'] as const
@@ -30,18 +29,8 @@ export default function HomePage() {
 function TeacherView({ teacher }: { teacher: Teacher }) {
   const [tab, setTab] = useState<TeacherTab>('Your Day')
 
-  const actions: CommandAction[] = TEACHER_TABS.map((t) => ({
-    id: t,
-    label: t,
-    hint: 'Go to tab',
-    onRun: () => setTab(t),
-  }))
-
   return (
     <div>
-      <div className="mb-2 flex justify-end">
-        <CommandPalette actions={actions} />
-      </div>
       <div className="tab-bar">
         {TEACHER_TABS.map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`tab-btn ${tab === t ? 'tab-btn-active' : ''}`}>
@@ -65,16 +54,8 @@ function MainContent() {
   // workflow, instead of opening straight into a data-entry screen.
   const [tab, setTab] = useState<Tab>('Overview')
 
-  const actions: CommandAction[] = [
-    ...TABS.map((t) => ({ id: t, label: t, hint: 'Go to tab', onRun: () => setTab(t) })),
-    { id: 'mark-absent', label: 'Mark someone absent', hint: 'Quick action', onRun: () => setTab('Substitutions') },
-  ]
-
   return (
     <div>
-      <div className="mb-2 flex justify-end">
-        <CommandPalette actions={actions} />
-      </div>
       <div className="tab-bar">
         {TABS.map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`tab-btn ${tab === t ? 'tab-btn-active' : ''}`}>
