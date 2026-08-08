@@ -89,7 +89,7 @@ export default function PreferredPeriodsTab() {
 
   return (
     <div>
-      <div className="mb-5 grid grid-cols-1 gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-[1fr_auto_auto]">
+      <div className="card mb-5 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
         <div>
           <label className="mb-1 block text-sm font-medium">Teacher</label>
           <TeacherAutocomplete teachers={teachers} value={teacherId} onChange={setTeacherId} />
@@ -114,7 +114,7 @@ export default function PreferredPeriodsTab() {
           <button
             onClick={markPreferred}
             disabled={!teacherId || !sectionId || alreadyMarked || saving}
-            className="w-full rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60 sm:w-auto"
+            className="btn-primary w-full sm:w-auto"
           >
             {alreadyMarked ? 'Already marked' : 'Add preference'}
           </button>

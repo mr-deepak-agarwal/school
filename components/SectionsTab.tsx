@@ -44,7 +44,7 @@ export default function SectionsTab() {
     <div>
       <form
         onSubmit={addSection}
-        className="mb-6 flex items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4"
+        className="mb-6 flex items-end gap-2 card"
       >
         <div>
           <label className="mb-1 block text-sm font-medium">Class</label>
@@ -60,7 +60,7 @@ export default function SectionsTab() {
             className="input w-20"
           />
         </div>
-        <button type="submit" className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white">
+        <button type="submit" className="btn-primary">
           Add
         </button>
       </form>

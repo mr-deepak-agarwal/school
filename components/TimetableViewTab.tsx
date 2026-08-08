@@ -16,6 +16,11 @@ export default function TimetableViewTab() {
   const [slots, setSlots] = useState<TimetableSlot[]>([])
   const [subsByTimetableId, setSubsByTimetableId] = useState<Record<number, string>>({})
   const [swaps, setSwaps] = useState<PeriodSwap[]>([])
+  // Periods this teacher has picked up as a substitute for someone else —
+  // shown in their own timetable so it's obvious they're not free then.
+  const [coveringSlots, setCoveringSlots] = useState<
+    { period: number; section_id: number; subject: string; original_teacher_id: string }[]
+  >([])
   const [loading, setLoading] = useState(false)
 
   const todaysDayName = useMemo(() => dayNameForDate(date), [date])
@@ -77,6 +82,37 @@ export default function TimetableViewTab() {
       setSubsByTimetableId(Object.fromEntries((subs ?? []).map((s: any) => [s.timetable_id, s.substitute_teacher_id])))
       setSwaps((swapRows ?? []) as PeriodSwap[])
 
+      // If we're looking at one teacher's timetable, also pull in any
+      // periods they've picked up as a substitute that date — otherwise
+      // their timetable would (wrongly) look free during those periods.
+      if (mode === 'teacher') {
+        const { data: coverSubs } = await supabase
+          .from('substitutions')
+          .select('*')
+          .eq('substitute_teacher_id', teacherId)
+          .eq('date', date)
+        const timetableIds = (coverSubs ?? []).map((s: any) => s.timetable_id)
+        const { data: coverTimetable } =
+          timetableIds.length > 0 ? await supabase.from('timetable').select('*').in('id', timetableIds) : { data: [] }
+        const timetableById = Object.fromEntries(((coverTimetable ?? []) as any[]).map((t) => [t.id, t]))
+        setCoveringSlots(
+          (coverSubs ?? [])
+            .map((s: any) => {
+              const row = timetableById[s.timetable_id]
+              if (!row) return null
+              return {
+                period: Number(row.period),
+                section_id: row.section_id,
+                subject: row.subject,
+                original_teacher_id: s.original_teacher_id,
+              }
+            })
+            .filter(Boolean) as { period: number; section_id: number; subject: string; original_teacher_id: string }[]
+        )
+      } else {
+        setCoveringSlots([])
+      }
+
       setLoading(false)
     }
     load()
@@ -93,7 +129,7 @@ export default function TimetableViewTab() {
 
   return (
     <div>
-      <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-4">
+      <div className="card mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
           <label className="mb-1 block text-sm font-medium">Date</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
@@ -206,6 +242,30 @@ export default function TimetableViewTab() {
                   )}
                 </td>
                 {PERIODS.map((p) => {
+                  const covering =
+                    mode === 'teacher' && day === todaysDayName
+                      ? coveringSlots.find((c) => c.period === p.period)
+                      : undefined
+
+                  if (covering) {
+                    return (
+                      <td
+                        key={p.period}
+                        className="border-b border-[var(--border)] bg-[var(--primary-tint)] px-1.5 py-2 align-top"
+                      >
+                        <div className="truncate text-xs font-medium leading-tight" title={covering.subject}>
+                          {covering.subject}
+                        </div>
+                        <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
+                          Class {sectionMap[covering.section_id] ?? ''}
+                        </div>
+                        <div className="mt-1 truncate text-[10px] font-medium text-[var(--primary)]">
+                          Covering for {teacherMap[covering.original_teacher_id] ?? '?'}
+                        </div>
+                      </td>
+                    )
+                  }
+
                   const slot = slots.find((s) => s.day === day && s.period === p.period)
                   if (!slot) {
                     return (

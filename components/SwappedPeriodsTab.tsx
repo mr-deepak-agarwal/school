@@ -161,7 +161,7 @@ export default function SwappedPeriodsTab() {
         </div>
       </div>
 
-      <div className="mb-5 grid grid-cols-1 gap-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-2">
+      <div className="mb-5 grid grid-cols-1 gap-4 card md:grid-cols-2">
         <div>
           <label className="mb-1 block text-sm font-medium">Teacher A</label>
           <TeacherAutocomplete teachers={teachers} value={teacherAId} onChange={setTeacherAId} excludeId={teacherBId} />
@@ -202,7 +202,7 @@ export default function SwappedPeriodsTab() {
       <button
         onClick={confirmSwap}
         disabled={!canConfirm || saving}
-        className="mb-8 rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="btn-primary mb-8"
       >
         Confirm swap
       </button>

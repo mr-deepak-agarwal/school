@@ -115,7 +115,7 @@ export default function TimetableTab() {
 
       <form
         onSubmit={addSlot}
-        className="mb-6 grid grid-cols-2 gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-3"
+        className="mb-6 grid grid-cols-2 gap-3 card sm:grid-cols-3"
       >
         <div>
           <label className="mb-1 block text-sm font-medium">Day</label>
@@ -181,7 +181,7 @@ export default function TimetableTab() {
         </div>
         <div className="col-span-2 sm:col-span-3">
           {error && <p className="mb-2 text-sm text-[var(--danger)]">{error}</p>}
-          <button type="submit" className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white">
+          <button type="submit" className="btn-primary">
             Add period
           </button>
         </div>

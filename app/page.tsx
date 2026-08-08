@@ -24,13 +24,15 @@ function MainContent() {
 
   return (
     <div>
-      <div className="mb-6 flex gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1">
+      <div className="mb-6 flex gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 rounded-md py-2 text-sm font-medium ${
-              tab === t ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+            className={`flex-1 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              tab === t
+                ? 'bg-[var(--primary)] text-white shadow-sm'
+                : 'text-[var(--muted)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
             }`}
           >
             {t}
@@ -38,11 +40,13 @@ function MainContent() {
         ))}
       </div>
 
-      {tab === 'Substitutions' && <SubstitutionsTab />}
-      {tab === 'Preferred Periods' && <PreferredPeriodsTab />}
-      {tab === 'Swapped Periods' && <SwappedPeriodsTab />}
-      {tab === 'Timetable' && <TimetableViewTab />}
-      {tab === 'Setup' && <SetupTab />}
+      <div className="animate-fade-in" key={tab}>
+        {tab === 'Substitutions' && <SubstitutionsTab />}
+        {tab === 'Preferred Periods' && <PreferredPeriodsTab />}
+        {tab === 'Swapped Periods' && <SwappedPeriodsTab />}
+        {tab === 'Timetable' && <TimetableViewTab />}
+        {tab === 'Setup' && <SetupTab />}
+      </div>
     </div>
   )
 }

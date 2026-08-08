@@ -26,18 +26,34 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   if (loading || !teacher || teacher.role !== 'admin') {
     return (
       <div className="flex h-screen items-center justify-center text-sm text-[var(--muted)]">
-        Loading…
+        <span className="flex items-center gap-2">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--primary)]" />
+          Loading…
+        </span>
       </div>
     )
   }
 
   return (
-    <div>
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-        <span className="text-sm font-semibold">School Timetable — Admin</span>
-        <button onClick={handleSignOut} className="text-sm text-[var(--muted)] hover:text-[var(--text)]">
-          Sign out
-        </button>
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)] text-sm font-semibold text-white">
+              S
+            </span>
+            <div>
+              <p className="text-sm font-semibold leading-tight">School Timetable</p>
+              <p className="text-[11px] leading-tight text-[var(--muted)]">Admin</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-[var(--muted)] sm:inline">{teacher.name}</span>
+            <button onClick={handleSignOut} className="btn-ghost btn-sm">
+              Sign out
+            </button>
+          </div>
+        </div>
       </header>
       <main className="mx-auto max-w-[1600px] px-4 py-6">{children}</main>
     </div>

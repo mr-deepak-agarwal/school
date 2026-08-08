@@ -2,11 +2,23 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import type { PeriodSwap, PreferredSub, Section, Teacher, TimetableSlot } from '@/lib/types'
+import type { LeaveRequest, PeriodSwap, PreferredSub, Teacher, TimetableSlot } from '@/lib/types'
 import { teacherTeachesSection, teacherTeachesSubject } from '@/lib/subjectMatch'
 import { swapFor, swapPartner } from '@/lib/periodSwaps'
-import { todayISO, dayNameForDate } from '@/lib/periods'
+import { todayISO, dayNameForDate, toISO } from '@/lib/periods'
+import {
+  occupiedPeriods,
+  checkWorkload,
+  MAX_PERIODS_PER_DAY,
+  MAX_CONTINUOUS_PERIODS,
+  FREQUENT_ABSENCE_THRESHOLD,
+  FREQUENT_ABSENCE_WINDOW_DAYS,
+} from '@/lib/workload'
+import { maybeAutoMarkPreferred } from '@/lib/autoPreferred'
+import { autoAssignSubstitutionsForLeave } from '@/lib/autoAssignSubstitutions'
 import TeacherAutocomplete from './TeacherAutocomplete'
+
+type SubRow = { id: number; substitute_teacher_id: string }
 
 export default function SubstitutionsTab() {
   const [date, setDate] = useState(todayISO())
@@ -17,12 +29,23 @@ export default function SubstitutionsTab() {
   const [teacherMap, setTeacherMap] = useState<Record<string, string>>({})
   const [fullTimetable, setFullTimetable] = useState<TimetableSlot[]>([])
 
+  // Leave-entry flow — this is the starting point: mark who's absent
+  // today, and their name drives everything below.
+  const [leaveToday, setLeaveToday] = useState<LeaveRequest[]>([])
+  const [leaveLoading, setLeaveLoading] = useState(false)
+  const [newAbsentId, setNewAbsentId] = useState('')
+  const [markingAbsent, setMarkingAbsent] = useState(false)
+  const [autoNotice, setAutoNotice] = useState<string | null>(null)
+  const [showManualPicker, setShowManualPicker] = useState(false)
+
   const [absentSlots, setAbsentSlots] = useState<TimetableSlot[]>([])
   const [dayTimetable, setDayTimetable] = useState<TimetableSlot[]>([])
-  const [existingSubs, setExistingSubs] = useState<Record<number, string>>({})
+  const [existingSubs, setExistingSubs] = useState<Record<number, SubRow>>({})
   const [preferredRows, setPreferredRows] = useState<PreferredSub[]>([])
   const [swaps, setSwaps] = useState<PeriodSwap[]>([])
   const [assignments, setAssignments] = useState<Record<number, string>>({})
+  const [editingSlotId, setEditingSlotId] = useState<number | null>(null)
+  const [autoPreferredNotes, setAutoPreferredNotes] = useState<Record<number, string>>({})
   const [saving, setSaving] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -44,6 +67,19 @@ export default function SubstitutionsTab() {
     loadStatic()
   }, [])
 
+  async function loadLeaveForDate() {
+    setLeaveLoading(true)
+    const { data } = await supabase.from('leave_register').select('*').eq('date', date).order('id')
+    setLeaveToday((data ?? []) as LeaveRequest[])
+    setLeaveLoading(false)
+  }
+
+  useEffect(() => {
+    loadLeaveForDate()
+    setAutoNotice(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date])
+
   async function loadForDate() {
     if (!absentTeacherId) {
       setAbsentSlots([])
@@ -62,9 +98,14 @@ export default function SubstitutionsTab() {
 
     setAbsentSlots((mySlots ?? []) as TimetableSlot[])
     setDayTimetable((dayRows ?? []) as TimetableSlot[])
-    setExistingSubs(Object.fromEntries((subs ?? []).map((x: any) => [x.timetable_id, x.substitute_teacher_id])))
+    setExistingSubs(
+      Object.fromEntries(
+        (subs ?? []).map((x: any) => [x.timetable_id, { id: x.id, substitute_teacher_id: x.substitute_teacher_id }])
+      )
+    )
     setPreferredRows((pref ?? []) as PreferredSub[])
     setSwaps((swapRows ?? []) as PeriodSwap[])
+    setEditingSlotId(null)
     setLoading(false)
   }
 
@@ -73,12 +114,77 @@ export default function SubstitutionsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [absentTeacherId, date, dayName])
 
+  // ---- Leave-entry flow -------------------------------------------------
+
+  async function markAbsent(teacherId: string) {
+    if (!teacherId) return
+    setMarkingAbsent(true)
+    setAutoNotice(null)
+
+    const { error } = await supabase
+      .from('leave_register')
+      .upsert({ date, teacher_id: teacherId, status: 'approved' }, { onConflict: 'date,teacher_id' })
+
+    if (error) {
+      console.error('Failed to mark teacher absent', error)
+      setMarkingAbsent(false)
+      return
+    }
+
+    // Chronic-absence check: how many times has this teacher been marked
+    // absent in the last FREQUENT_ABSENCE_WINDOW_DAYS? If it crosses the
+    // threshold, don't make the admin fill every period by hand — run the
+    // same matching the auto-assign pass uses and just show the result.
+    const cutoff = new Date(date + 'T00:00:00')
+    cutoff.setDate(cutoff.getDate() - FREQUENT_ABSENCE_WINDOW_DAYS)
+    const { count } = await supabase
+      .from('leave_register')
+      .select('id', { count: 'exact', head: true })
+      .eq('teacher_id', teacherId)
+      .gte('date', toISO(cutoff))
+
+    setNewAbsentId('')
+    setAbsentTeacherId(teacherId)
+    await loadLeaveForDate()
+
+    if ((count ?? 0) >= FREQUENT_ABSENCE_THRESHOLD) {
+      const result = await autoAssignSubstitutionsForLeave(teacherId, date)
+      setAutoNotice(
+        `${teacherMap[teacherId] ?? 'This teacher'} has been absent ${count} times in the last ${FREQUENT_ABSENCE_WINDOW_DAYS} days, so their periods were auto-assigned (${result.assigned.length} covered${
+          result.unassigned.length ? `, ${result.unassigned.length} still need a pick` : ''
+        }). Review below and adjust anything you'd like changed.`
+      )
+      await loadForDate()
+    }
+
+    setMarkingAbsent(false)
+  }
+
+  async function unmarkAbsent(id: number) {
+    await supabase.from('leave_register').delete().eq('id', id)
+    loadLeaveForDate()
+  }
+
   // Periods that still need a substitute — anything already handled by a
   // swap that day is self-covered and doesn't show up here.
   const slotsToCover = useMemo(
     () => absentSlots.filter((slot) => !swapFor(swaps, absentTeacherId, Number(slot.period))),
     [absentSlots, swaps, absentTeacherId]
   )
+
+  // teacher -> extra periods they're already covering as a substitute
+  // today (on top of their normal timetable), for workload math.
+  const extraSubPeriodsByTeacher = useMemo(() => {
+    const map = new Map<string, number[]>()
+    for (const [timetableId, sub] of Object.entries(existingSubs)) {
+      const row = dayTimetable.find((r) => r.id === Number(timetableId))
+      if (!row) continue
+      const arr = map.get(sub.substitute_teacher_id) ?? []
+      arr.push(Number(row.period))
+      map.set(sub.substitute_teacher_id, arr)
+    }
+    return map
+  }, [existingSubs, dayTimetable])
 
   const candidatesBySlot = useMemo(() => {
     const map = new Map<
@@ -88,6 +194,7 @@ export default function SubstitutionsTab() {
         sameSubject: Teacher[]
         sameSection: Teacher[]
         other: Teacher[]
+        overCapacity: Teacher[]
         suggested: Teacher | null
         suggestedPrefId: number | null
       }
@@ -99,12 +206,18 @@ export default function SubstitutionsTab() {
       for (const row of dayTimetable) {
         if (Number(row.period) === slotPeriod && row.teacher_id) busyIds.add(String(row.teacher_id))
       }
-      for (const [timetableId, subId] of Object.entries(existingSubs)) {
+      for (const [timetableId, sub] of Object.entries(existingSubs)) {
         const row = dayTimetable.find((r) => r.id === Number(timetableId))
-        if (row && Number(row.period) === slotPeriod) busyIds.add(String(subId))
+        if (row && Number(row.period) === slotPeriod) busyIds.add(String(sub.substitute_teacher_id))
       }
 
       const eligible = teachers.filter((t) => t.id !== absentTeacherId && !busyIds.has(String(t.id)))
+
+      const withinCapacity = (t: Teacher) => {
+        const occ = occupiedPeriods(t.id, dayTimetable, extraSubPeriodsByTeacher.get(t.id) ?? [])
+        const check = checkWorkload(occ, slotPeriod)
+        return !check.exceedsDaily && !check.exceedsContinuous
+      }
 
       // A teacher who explicitly marked themselves preferred for THIS exact
       // section (and hasn't already used that preference) — the strongest
@@ -113,7 +226,10 @@ export default function SubstitutionsTab() {
       const prefRowFor = (teacherId: string) =>
         preferredRows.find((p) => p.teacher_id === teacherId && p.section_id === slot.section_id)
 
-      const preferredSection = eligible.filter((t) => !!prefRowFor(t.id))
+      const overCapacity = eligible.filter((t) => !withinCapacity(t))
+      const capacityOk = eligible.filter((t) => withinCapacity(t))
+
+      const preferredSection = capacityOk.filter((t) => !!prefRowFor(t.id))
       const preferredSectionIds = new Set(preferredSection.map((t) => t.id))
 
       // Only teachers who actually teach this section (any subject, any
@@ -122,30 +238,30 @@ export default function SubstitutionsTab() {
       // just because they're free.
       const teachesSection = (t: Teacher) => teacherTeachesSection(t.id, slot.section_id, fullTimetable)
 
-      const sameSubject = eligible.filter(
+      const sameSubject = capacityOk.filter(
         (t) => !preferredSectionIds.has(t.id) && teachesSection(t) && teacherTeachesSubject(t, slot.subject)
       )
       const sameSubjectIds = new Set(sameSubject.map((t) => t.id))
 
-      const sameSection = eligible.filter(
+      const sameSection = capacityOk.filter(
         (t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && teachesSection(t)
       )
       const sameSectionIds = new Set(sameSection.map((t) => t.id))
 
       // Last-resort fallback: free, but doesn't teach this section at all.
       // Kept so admin is never fully stuck, but never auto-suggested.
-      const other = eligible.filter(
+      const other = capacityOk.filter(
         (t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && !sameSectionIds.has(t.id)
       )
 
       const suggested = preferredSection[0] ?? sameSubject[0] ?? sameSection[0] ?? null
       const suggestedPrefId = suggested ? prefRowFor(suggested.id)?.id ?? null : null
 
-      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, suggested, suggestedPrefId })
+      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, overCapacity, suggested, suggestedPrefId })
     }
 
     return map
-  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferredRows, fullTimetable, absentTeacherId])
+  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferredRows, fullTimetable, absentTeacherId, extraSubPeriodsByTeacher])
 
   // Pre-fill the dropdown with the top suggestion so admin usually just hits Assign.
   useEffect(() => {
@@ -183,25 +299,119 @@ export default function SubstitutionsTab() {
       await supabase.from('preferred_substitutions').update({ fulfilled: true }).eq('id', usedPref.id)
     }
 
+    // Frequent-cover check: if this teacher has now covered this section
+    // enough times, opt them in as a preferred substitute for it going
+    // forward, automatically.
+    const becamePreferred = await maybeAutoMarkPreferred(subId, slot.section_id)
+    if (becamePreferred) {
+      setAutoPreferredNotes((n) => ({
+        ...n,
+        [slot.id]: `✓ ${teacherMap[subId] ?? 'This teacher'} has now covered Class ${sectionMap[slot.section_id]} enough times to be auto-marked preferred for it.`,
+      }))
+    }
+
     setSaving(null)
+    setEditingSlotId(null)
     loadForDate()
+  }
+
+  async function removeSubstitution(slot: TimetableSlot) {
+    const existing = existingSubs[slot.id]
+    if (!existing) return
+    setSaving(slot.id)
+    await supabase.from('substitutions').delete().eq('id', existing.id)
+    setSaving(null)
+    setEditingSlotId(null)
+    loadForDate()
+  }
+
+  function startEdit(slot: TimetableSlot) {
+    const existing = existingSubs[slot.id]
+    if (existing) setAssignments((a) => ({ ...a, [slot.id]: existing.substitute_teacher_id }))
+    setEditingSlotId(slot.id)
   }
 
   return (
     <div>
-      <div className="mb-5 grid grid-cols-1 gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-2">
-        <div>
-          <label className="mb-1 block text-sm font-medium">Teacher on leave</label>
-          <TeacherAutocomplete teachers={teachers} value={absentTeacherId} onChange={setAbsentTeacherId} />
+      {/* ---- Step 1: who's absent today ---- */}
+      <div className="card mb-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="section-label mb-0">Teachers on leave · {dayName}</h2>
+          <div>
+            <label className="mr-2 text-xs font-medium text-[var(--muted)]">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input inline-block w-auto" />
+          </div>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Date</label>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+          <div className="flex-1">
+            <TeacherAutocomplete teachers={teachers} value={newAbsentId} onChange={setNewAbsentId} placeholder="Mark a teacher absent…" />
+          </div>
+          <button
+            onClick={() => markAbsent(newAbsentId)}
+            disabled={!newAbsentId || markingAbsent}
+            className="btn-primary sm:w-auto"
+          >
+            {markingAbsent ? 'Marking…' : '+ Mark absent'}
+          </button>
         </div>
+
+        {leaveLoading ? (
+          <p className="text-sm text-[var(--muted)]">Loading…</p>
+        ) : leaveToday.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No one has been marked absent for this date yet.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {leaveToday.map((l) => (
+              <div key={l.id} className="animate-fade-in">
+                <button
+                  onClick={() => setAbsentTeacherId(l.teacher_id)}
+                  className={`chip ${absentTeacherId === l.teacher_id ? 'chip-active' : ''}`}
+                >
+                  {teacherMap[l.teacher_id] ?? 'Unknown teacher'}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      unmarkAbsent(l.id)
+                    }}
+                    className={`ml-1 rounded-full px-1 text-xs leading-none ${
+                      absentTeacherId === l.teacher_id ? 'text-white/70 hover:text-white' : 'text-[var(--muted)] hover:text-[var(--danger)]'
+                    }`}
+                    title="Remove from today's leave list"
+                  >
+                    ×
+                  </span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowManualPicker((v) => !v)}
+          className="mt-3 text-xs font-medium text-[var(--muted)] hover:text-[var(--primary)]"
+        >
+          {showManualPicker ? '– Hide manual search' : 'Not on the list? Search any teacher →'}
+        </button>
+        {showManualPicker && (
+          <div className="mt-2 max-w-sm animate-fade-in">
+            <TeacherAutocomplete teachers={teachers} value={absentTeacherId} onChange={setAbsentTeacherId} placeholder="Search any teacher…" />
+          </div>
+        )}
       </div>
 
+      {autoNotice && (
+        <div className="card mb-5 border-[var(--accent)]/40 bg-[var(--accent-tint)] text-sm text-[var(--text)]">
+          <span className="badge-accent mr-2">Auto-assigned</span>
+          {autoNotice}
+        </div>
+      )}
+
+      {/* ---- Step 2: their timetable + substitution picks ---- */}
       {!absentTeacherId ? (
-        <p className="text-sm text-[var(--muted)]">Start typing a name to see their periods for that day.</p>
+        <p className="text-sm text-[var(--muted)]">Mark a teacher absent above, or pick one, to see their periods for that day.</p>
       ) : loading ? (
         <p className="text-sm text-[var(--muted)]">Loading…</p>
       ) : absentSlots.length === 0 ? (
@@ -209,101 +419,145 @@ export default function SubstitutionsTab() {
           {teacherMap[absentTeacherId]} has no periods on {dayName}, {date}.
         </p>
       ) : (
-        <ul className="space-y-3">
-          {absentSlots.map((slot) => {
-            const swap = swapFor(swaps, absentTeacherId, Number(slot.period))
-            if (swap) {
-              const { partnerId, partnerPeriod } = swapPartner(swap, absentTeacherId)
+        <>
+          <h3 className="section-label">
+            {teacherMap[absentTeacherId]}&rsquo;s timetable — {dayName}, {date}
+          </h3>
+          <ul className="space-y-3">
+            {absentSlots.map((slot) => {
+              const swap = swapFor(swaps, absentTeacherId, Number(slot.period))
+              if (swap) {
+                const { partnerId, partnerPeriod } = swapPartner(swap, absentTeacherId)
+                return (
+                  <li key={slot.id} className="card">
+                    <p className="text-sm font-medium">
+                      Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
+                    </p>
+                    <p className="mt-2 text-sm font-medium text-[var(--success)]">
+                      Covered via swap — {teacherMap[partnerId] ?? 'another teacher'} takes this period (Period{' '}
+                      {partnerPeriod} swapped in return)
+                    </p>
+                  </li>
+                )
+              }
+
+              const assigned = existingSubs[slot.id]
+              const entry = candidatesBySlot.get(slot.id)
+              const isSuggested = !!entry?.suggested && assignments[slot.id] === entry.suggested.id
+              const isEditing = editingSlotId === slot.id
+
               return (
-                <li key={slot.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-                  <p className="text-sm font-medium">
-                    Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-[var(--success)]">
-                    Covered via swap — {teacherMap[partnerId] ?? 'another teacher'} takes this period (Period{' '}
-                    {partnerPeriod} swapped in return)
-                  </p>
+                <li key={slot.id} className="card card-hover">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium">
+                      Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
+                    </p>
+                    {assigned && !isEditing && <span className="badge-success shrink-0">Covered</span>}
+                  </div>
+
+                  {assigned && !isEditing ? (
+                    <>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-[var(--success)]">
+                          Assigned: {teacherMap[assigned.substitute_teacher_id]}
+                        </p>
+                        <button onClick={() => startEdit(slot)} className="btn-ghost btn-sm">
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => removeSubstitution(slot)}
+                          disabled={saving === slot.id}
+                          className="btn-ghost btn-sm text-[var(--danger)] hover:bg-[var(--danger-bg)]"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      {autoPreferredNotes[slot.id] && (
+                        <p className="mt-1.5 text-xs text-[var(--accent)]">{autoPreferredNotes[slot.id]}</p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="mt-2 flex gap-2">
+                        <select
+                          value={assignments[slot.id] ?? ''}
+                          onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
+                          className="input flex-1"
+                        >
+                          <option value="">Select substitute…</option>
+                          {entry && entry.preferredSection.length > 0 && (
+                            <optgroup label="✓ Marked preferred for this section">
+                              {entry.preferredSection.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {entry && entry.sameSubject.length > 0 && (
+                            <optgroup label="Teaches this subject to this section">
+                              {entry.sameSubject.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {entry && entry.sameSection.length > 0 && (
+                            <optgroup label="Teaches this section (other subject)">
+                              {entry.sameSection.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {entry && entry.other.length > 0 && (
+                            <optgroup label="⚠ Doesn't teach this section — emergency only">
+                              {entry.other.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {entry && entry.overCapacity.length > 0 && (
+                            <optgroup
+                              label={`⚠ Over workload limit (${MAX_PERIODS_PER_DAY}/day, ${MAX_CONTINUOUS_PERIODS} in a row) — emergency only`}
+                            >
+                              {entry.overCapacity.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                        <button
+                          onClick={() => assign(slot)}
+                          disabled={!assignments[slot.id] || saving === slot.id}
+                          className="btn-primary"
+                        >
+                          {isEditing ? 'Save' : 'Assign'}
+                        </button>
+                        {isEditing && (
+                          <button onClick={() => setEditingSlotId(null)} className="btn-secondary">
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                      {isSuggested && (
+                        <p className="mt-1.5 text-xs text-[var(--muted)]">
+                          Suggested — free that period. Change the dropdown if you&rsquo;d rather pick someone else.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </li>
               )
-            }
-
-            const assigned = existingSubs[slot.id]
-            const entry = candidatesBySlot.get(slot.id)
-            const isSuggested = !!entry?.suggested && assignments[slot.id] === entry.suggested.id
-
-            return (
-              <li key={slot.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-                <p className="text-sm font-medium">
-                  Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
-                </p>
-
-                {assigned ? (
-                  <p className="mt-1 text-sm font-medium text-[var(--success)]">Assigned: {teacherMap[assigned]}</p>
-                ) : (
-                  <>
-                    <div className="mt-2 flex gap-2">
-                      <select
-                        value={assignments[slot.id] ?? ''}
-                        onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
-                        className="flex-1 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
-                      >
-                        <option value="">Select substitute…</option>
-                        {entry && entry.preferredSection.length > 0 && (
-                          <optgroup label="✓ Marked preferred for this section">
-                            {entry.preferredSection.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {entry && entry.sameSubject.length > 0 && (
-                          <optgroup label="Teaches this subject to this section">
-                            {entry.sameSubject.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {entry && entry.sameSection.length > 0 && (
-                          <optgroup label="Teaches this section (other subject)">
-                            {entry.sameSection.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {entry && entry.other.length > 0 && (
-                          <optgroup label="⚠ Doesn't teach this section — emergency only">
-                            {entry.other.map((t) => (
-                              <option key={t.id} value={t.id}>
-                                {t.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                      </select>
-                      <button
-                        onClick={() => assign(slot)}
-                        disabled={!assignments[slot.id] || saving === slot.id}
-                        className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                      >
-                        Assign
-                      </button>
-                    </div>
-                    {isSuggested && (
-                      <p className="mt-1.5 text-xs text-[var(--muted)]">
-                        Suggested — free that period. Change the dropdown if you&rsquo;d rather pick someone else.
-                      </p>
-                    )}
-                  </>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+            })}
+          </ul>
+        </>
       )}
     </div>
   )

@@ -104,7 +104,7 @@ export default function TeachersTab() {
       {showForm && (
         <form
           onSubmit={addTeacher}
-          className="mb-6 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4"
+          className="mb-6 space-y-3 card"
         >
           <Field label="Full name">
             <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input" />
@@ -154,7 +154,7 @@ export default function TeachersTab() {
           <button
             type="submit"
             disabled={saving}
-            className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+            className="btn-primary"
           >
             {saving ? 'Creating…' : 'Create teacher'}
           </button>
@@ -163,7 +163,7 @@ export default function TeachersTab() {
 
       <ul className="space-y-2">
         {teachers.map((t) => (
-          <li key={t.id} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-4">
+          <li key={t.id} className="card">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">

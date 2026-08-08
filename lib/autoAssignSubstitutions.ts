@@ -1,6 +1,8 @@
 import { supabase } from './supabaseClient'
 import type { Teacher, TimetableSlot } from './types'
 import { teacherTeachesSubject } from './subjectMatch'
+import { occupiedPeriods, checkWorkload } from './workload'
+import { maybeAutoMarkPreferred } from './autoPreferred'
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -90,6 +92,19 @@ export async function autoAssignSubstitutionsForLeave(
 
   const teacherList = ((teachers ?? []) as Teacher[]).slice().sort((a, b) => a.name.localeCompare(b.name))
 
+  // Tracks, per teacher, every period they hold today — their normal load
+  // plus anything already picked up as a substitute (including ones this
+  // very pass hands out) — so the 5-periods / 3-in-a-row workload caps are
+  // respected instead of piling everything onto the first free name.
+  const extraPeriodsByTeacher = new Map<string, number[]>()
+  for (const s of (existingSubs ?? []) as any[]) {
+    const row = timetableById[s.timetable_id]
+    if (!row) continue
+    const arr = extraPeriodsByTeacher.get(s.substitute_teacher_id) ?? []
+    arr.push(Number(row.period))
+    extraPeriodsByTeacher.set(s.substitute_teacher_id, arr)
+  }
+
   const assigned: AutoAssignResult['assigned'] = []
   const unassigned: TimetableSlot[] = []
   const toInsert: any[] = []
@@ -102,12 +117,19 @@ export async function autoAssignSubstitutionsForLeave(
     if (!busyAtPeriod.has(slotPeriod)) busyAtPeriod.set(slotPeriod, new Set())
     const busy = busyAtPeriod.get(slotPeriod)!
 
+    const withinWorkload = (t: Teacher) => {
+      const occ = occupiedPeriods(t.id, (dayTimetable ?? []) as TimetableSlot[], extraPeriodsByTeacher.get(t.id) ?? [])
+      const check = checkWorkload(occ, slotPeriod)
+      return !check.exceedsDaily && !check.exceedsContinuous
+    }
+
     const candidates = teacherList.filter(
       (t) =>
         t.id !== slot.teacher_id &&
         !onLeaveIds.has(t.id) &&
         !busy.has(String(t.id)) &&
-        teacherTeachesSubject(t, slot.subject)
+        teacherTeachesSubject(t, slot.subject) &&
+        withinWorkload(t)
     )
 
     if (candidates.length === 0) {
@@ -119,6 +141,10 @@ export async function autoAssignSubstitutionsForLeave(
     const chosen = preferredMatch ?? candidates[0]
 
     busy.add(String(chosen.id))
+    const chosenExtra = extraPeriodsByTeacher.get(chosen.id) ?? []
+    chosenExtra.push(slotPeriod)
+    extraPeriodsByTeacher.set(chosen.id, chosenExtra)
+
     assigned.push({ slot, teacher: chosen, viaPreference: !!preferredMatch })
     toInsert.push({
       date,
@@ -139,6 +165,12 @@ export async function autoAssignSubstitutionsForLeave(
 
   if (fulfilledPrefIds.size > 0) {
     await supabase.from('preferred_substitutions').update({ fulfilled: true }).in('id', [...fulfilledPrefIds])
+  }
+
+  // Frequent-cover check: anyone who's now covered a section enough times
+  // gets automatically opted in as a preferred substitute for it.
+  for (const a of assigned) {
+    await maybeAutoMarkPreferred(a.teacher.id, a.slot.section_id)
   }
 
   return { assigned, unassigned }
