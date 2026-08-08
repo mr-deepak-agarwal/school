@@ -3,21 +3,11 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import type { Section, Teacher, TimetableSlot } from '@/lib/types'
-
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-
-const PERIODS = [
-  { period: 1, start: '9:20', end: '9:55' },
-  { period: 2, start: '9:55', end: '10:30' },
-  { period: 3, start: '10:45', end: '11:20' },
-  { period: 4, start: '11:20', end: '11:55' },
-  { period: 5, start: '11:55', end: '12:30' },
-  { period: 6, start: '12:30', end: '1:05' },
-  { period: 7, start: '1:25', end: '2:00' },
-  { period: 8, start: '2:00', end: '2:35' },
-  { period: 9, start: '2:35', end: '3:10' },
-  { period: 10, start: '3:10', end: '4:00' },
-]
+// DAYS and PERIODS live in one place (lib/periods.ts) — this used to keep a
+// second, hand-copied set of period times here, which meant a schedule
+// change (e.g. moving the lunch break) had to be made in two files or the
+// Timetable and Substitutions tabs would quietly disagree with each other.
+import { DAYS, PERIODS } from '@/lib/periods'
 
 export default function TimetableTab() {
   const [sections, setSections] = useState<Section[]>([])

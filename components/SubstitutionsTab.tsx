@@ -535,7 +535,7 @@ export default function SubstitutionsTab() {
         {leaveLoading ? (
           <p className="text-sm text-[var(--muted)]">Loading…</p>
         ) : leaveToday.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No one has been marked absent for this date yet.</p>
+          <p className="text-sm text-[var(--muted)]">No one&rsquo;s on leave for this date yet — mark someone absent above.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {leaveToday.map((l) => (
@@ -628,7 +628,7 @@ export default function SubstitutionsTab() {
 
       {/* ---- Frequent-absence proposal: nothing is saved until confirmed ---- */}
       {pendingAutoAssign && (
-        <div className="card mb-5 border-[var(--accent)]/50 animate-fade-in">
+        <div className="card-flag mb-5 animate-fade-in">
           <div className="mb-1 flex items-center gap-2">
             <span className="badge-accent">Needs your OK</span>
             <p className="text-sm font-medium">
@@ -681,7 +681,7 @@ export default function SubstitutionsTab() {
         {daySubsLoading ? (
           <p className="text-sm text-[var(--muted)]">Loading…</p>
         ) : daySubs.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No substitutions recorded yet for this date.</p>
+          <p className="text-sm text-[var(--muted)]">Nothing recorded yet — assign substitutes below and they&rsquo;ll show up here.</p>
         ) : (
           <ul className="divide-y divide-[var(--border)]">
             {daySubs.map((s) => (
