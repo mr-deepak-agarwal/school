@@ -21,7 +21,7 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const vapidPublicKey = Deno.env.get('VAPID_PUBLIC_KEY')!
 const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY')!
-const vapidSubject = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:deepakagarwalsrc@gmail.com'
+const vapidSubject = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@example.com'
 
 webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey)
 
