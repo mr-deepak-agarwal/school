@@ -266,7 +266,7 @@ export default function SubstitutionsTab() {
         sameSubject: Teacher[]
         sameSection: Teacher[]
         other: Teacher[]
-        overCapacity: Teacher[]
+        overCapacityIds: Set<string>
         suggested: Teacher | null
         suggestedPrefId: number | null
       }
@@ -291,6 +291,12 @@ export default function SubstitutionsTab() {
         return !check.exceedsDaily && !check.exceedsContinuous
       }
 
+      // A teacher who's over the workload cap still belongs in whichever
+      // category actually fits them (preferred / same subject / etc.) —
+      // they're just flagged inline, rather than exiled to their own pile,
+      // so "preferred but a bit over" doesn't get buried under strangers.
+      const overCapacityIds = new Set(eligible.filter((t) => !withinCapacity(t)).map((t) => t.id))
+
       // A teacher who explicitly marked themselves preferred for THIS exact
       // section (and hasn't already used that preference) — the strongest
       // possible signal, regardless of whether they've historically taught
@@ -298,10 +304,13 @@ export default function SubstitutionsTab() {
       const prefRowFor = (teacherId: string) =>
         preferredRows.find((p) => p.teacher_id === teacherId && p.section_id === slot.section_id)
 
-      const overCapacity = eligible.filter((t) => !withinCapacity(t))
-      const capacityOk = eligible.filter((t) => withinCapacity(t))
+      const byCapacityThenName = (a: Teacher, b: Teacher) => {
+        const aOver = overCapacityIds.has(a.id) ? 1 : 0
+        const bOver = overCapacityIds.has(b.id) ? 1 : 0
+        return aOver - bOver
+      }
 
-      const preferredSection = capacityOk.filter((t) => !!prefRowFor(t.id))
+      const preferredSection = eligible.filter((t) => !!prefRowFor(t.id)).sort(byCapacityThenName)
       const preferredSectionIds = new Set(preferredSection.map((t) => t.id))
 
       // Only teachers who actually teach this section (any subject, any
@@ -310,26 +319,32 @@ export default function SubstitutionsTab() {
       // just because they're free.
       const teachesSection = (t: Teacher) => teacherTeachesSection(t.id, slot.section_id, fullTimetable)
 
-      const sameSubject = capacityOk.filter(
-        (t) => !preferredSectionIds.has(t.id) && teachesSection(t) && teacherTeachesSubject(t, slot.subject)
-      )
+      const sameSubject = eligible
+        .filter((t) => !preferredSectionIds.has(t.id) && teachesSection(t) && teacherTeachesSubject(t, slot.subject))
+        .sort(byCapacityThenName)
       const sameSubjectIds = new Set(sameSubject.map((t) => t.id))
 
-      const sameSection = capacityOk.filter(
-        (t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && teachesSection(t)
-      )
+      const sameSection = eligible
+        .filter((t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && teachesSection(t))
+        .sort(byCapacityThenName)
       const sameSectionIds = new Set(sameSection.map((t) => t.id))
 
       // Last-resort fallback: free, but doesn't teach this section at all.
       // Kept so admin is never fully stuck, but never auto-suggested.
-      const other = capacityOk.filter(
-        (t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && !sameSectionIds.has(t.id)
-      )
+      const other = eligible
+        .filter((t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && !sameSectionIds.has(t.id))
+        .sort(byCapacityThenName)
 
-      const suggested = preferredSection[0] ?? sameSubject[0] ?? sameSection[0] ?? null
+      // Auto-suggest only picks from within-capacity candidates — being
+      // over the limit is fine to offer, never fine to default to.
+      const suggested =
+        preferredSection.find((t) => !overCapacityIds.has(t.id)) ??
+        sameSubject.find((t) => !overCapacityIds.has(t.id)) ??
+        sameSection.find((t) => !overCapacityIds.has(t.id)) ??
+        null
       const suggestedPrefId = suggested ? prefRowFor(suggested.id)?.id ?? null : null
 
-      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, overCapacity, suggested, suggestedPrefId })
+      map.set(slot.id, { preferredSection, sameSubject, sameSection, other, overCapacityIds, suggested, suggestedPrefId })
     }
 
     return map
@@ -561,6 +576,9 @@ export default function SubstitutionsTab() {
         <>
           <h3 className="section-label">
             {teacherMap[absentTeacherId]}&rsquo;s timetable — {dayName}, {date}
+            <span className="ml-2 font-normal normal-case text-[var(--muted)]">
+              (workload limit: {MAX_PERIODS_PER_DAY} periods/day, {MAX_CONTINUOUS_PERIODS} in a row)
+            </span>
           </h3>
           <ul className="space-y-3">
             {absentSlots.map((slot) => {
@@ -629,6 +647,7 @@ export default function SubstitutionsTab() {
                               {entry.preferredSection.map((t) => (
                                 <option key={t.id} value={t.id}>
                                   {t.name}
+                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                                 </option>
                               ))}
                             </optgroup>
@@ -638,6 +657,7 @@ export default function SubstitutionsTab() {
                               {entry.sameSubject.map((t) => (
                                 <option key={t.id} value={t.id}>
                                   {t.name}
+                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                                 </option>
                               ))}
                             </optgroup>
@@ -647,6 +667,7 @@ export default function SubstitutionsTab() {
                               {entry.sameSection.map((t) => (
                                 <option key={t.id} value={t.id}>
                                   {t.name}
+                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                                 </option>
                               ))}
                             </optgroup>
@@ -656,17 +677,7 @@ export default function SubstitutionsTab() {
                               {entry.other.map((t) => (
                                 <option key={t.id} value={t.id}>
                                   {t.name}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                          {entry && entry.overCapacity.length > 0 && (
-                            <optgroup
-                              label={`⚠ Over workload limit (${MAX_PERIODS_PER_DAY}/day, ${MAX_CONTINUOUS_PERIODS} in a row) — emergency only`}
-                            >
-                              {entry.overCapacity.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name}
+                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                                 </option>
                               ))}
                             </optgroup>
