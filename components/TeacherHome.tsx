@@ -96,7 +96,7 @@ export default function TeacherHome({ teacher }: { teacher: Teacher }) {
     <div>
       <div className="card mb-5">
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="section-label mb-0">Your day</h2>
+          <h2 className="font-display mb-0 text-lg font-semibold">Your day</h2>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input inline-block w-auto" />
         </div>
         <p className="text-sm text-[var(--muted)]">
@@ -108,7 +108,7 @@ export default function TeacherHome({ teacher }: { teacher: Teacher }) {
         <p className="text-sm text-[var(--muted)]">Loading…</p>
       ) : timeline.length === 0 ? (
         <div className="card">
-          <p className="text-sm text-[var(--muted)]">Nothing on your timetable for {dayName}.</p>
+          <p className="font-display text-base text-[var(--muted)]">Nothing on the board for {dayName} — enjoy the free periods.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

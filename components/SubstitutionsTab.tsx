@@ -503,7 +503,7 @@ export default function SubstitutionsTab() {
       {/* ---- Step 1: who's absent today ---- */}
       <div className="card mb-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="section-label mb-0">Teachers on leave · {dayName}</h2>
+          <h2 className="font-display mb-0 text-lg font-semibold">Teachers on leave · {dayName}</h2>
           <div>
             <label className="mr-2 text-xs font-medium text-[var(--muted)]">Date</label>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input inline-block w-auto" />
@@ -583,8 +583,8 @@ export default function SubstitutionsTab() {
 
       {/* ---- Leave requests teachers filed themselves, awaiting a decision ---- */}
       {(pendingLoading || pendingRequests.length > 0) && (
-        <div className="card mb-5">
-          <h2 className="section-label mb-3">Pending leave requests</h2>
+        <div className="card-flag mb-5">
+          <h2 className="font-display mb-3 text-lg font-semibold">Pending leave requests</h2>
           {pendingLoading ? (
             <p className="text-sm text-[var(--muted)]">Loading…</p>
           ) : (

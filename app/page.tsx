@@ -30,17 +30,9 @@ function TeacherView({ teacher }: { teacher: Teacher }) {
 
   return (
     <div>
-      <div className="mb-6 flex gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
+      <div className="tab-bar">
         {TEACHER_TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-bold transition-all ${
-              tab === t
-                ? 'border-[var(--primary-dark)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)]'
-                : 'border-transparent text-[var(--muted)] hover:border-[var(--border)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
-            }`}
-          >
+          <button key={t} onClick={() => setTab(t)} className={`tab-btn ${tab === t ? 'tab-btn-active' : ''}`}>
             {t}
           </button>
         ))}
@@ -60,17 +52,9 @@ function MainContent() {
 
   return (
     <div>
-      <div className="mb-6 flex gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
+      <div className="tab-bar">
         {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-bold transition-all ${
-              tab === t
-                ? 'border-[var(--primary-dark)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)]'
-                : 'border-transparent text-[var(--muted)] hover:border-[var(--border)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
-            }`}
-          >
+          <button key={t} onClick={() => setTab(t)} className={`tab-btn ${tab === t ? 'tab-btn-active' : ''}`}>
             {t}
           </button>
         ))}

@@ -3,37 +3,45 @@
 @tailwind utilities;
 
 :root {
-  /* Off-white surface, dark green as the primary accent. Borders are a
-     visible but soft structural line — not pitch black, not too heavy. */
-  --bg: #F5F3EC;
+  /* Warm parchment surface, deep chalkboard green as the primary, and a
+     marigold "chalk mark" as the one bold signature accent — spent
+     deliberately, on active tabs and flagged items, not everywhere. */
+  --bg: #F3EEDF;
   --surface: #FFFFFF;
-  --surface-sunken: #EFEDE3;
-  --text: #1B2620;
-  --muted: #5B6659;
-  --border: #CBC7B4;
-  --border-strong: #A39D82;
-  --ink: #16241C;
+  --surface-sunken: #ECE6D3;
+  --text: #1A2621;
+  --muted: #5C6659;
+  --border: #D8D0B4;
+  --border-strong: #B6AC85;
+  --ink: #14211A;
 
-  --primary: #1E4B36;
-  --primary-dark: #123726;
-  --primary-tint: #E5EDE7;
-  --primary-ring: rgba(30, 75, 54, 0.18);
+  --primary: #163A28;
+  --primary-dark: #0D2A1B;
+  --primary-tint: #E3ECE5;
+  --primary-ring: rgba(22, 58, 40, 0.2);
 
-  --accent: #A98B3B;
-  --accent-tint: #F5EEDC;
+  /* The signature marigold — a chalk-mark accent, not a background color.
+     Used for the active-tab underline, flagged/pending cards, and the
+     logo mark's accent stroke. */
+  --accent: #DB8B1F;
+  --accent-dark: #B36F13;
+  --accent-tint: #FBEAD1;
+  --accent-ring: rgba(219, 139, 31, 0.25);
 
-  --warn: #9C5B12;
-  --warn-bg: #FBEEDC;
-  --success: #226B45;
-  --success-bg: #E4F1E9;
+  --warn: #9C4E12;
+  --warn-bg: #FBEADA;
+  --success: #1F6B45;
+  --success-bg: #E1F1E7;
   --danger: #A32A22;
   --danger-bg: #FBEAE8;
 
-  /* Soft-ish offset shadow for depth — kept subtle now that borders
-     themselves are thin, so the two don't compete. */
-  --shadow-sm: 1px 1px 3px rgba(22, 36, 28, 0.12);
-  --shadow-md: 2px 3px 8px rgba(22, 36, 28, 0.14);
-  --shadow-press: 0 1px 2px rgba(22, 36, 28, 0.1);
+  /* Sticker-style offset shadow for depth — a little deeper than a
+     typical soft UI shadow, on purpose: it reads as tactile, physical,
+     like a card pinned to a board, matching the chalkboard/notice-board
+     identity rather than a generic soft-UI blur. */
+  --shadow-sm: 1px 1px 3px rgba(20, 33, 26, 0.14);
+  --shadow-md: 3px 4px 10px rgba(20, 33, 26, 0.16);
+  --shadow-press: 0 1px 2px rgba(20, 33, 26, 0.12);
 }
 
 * {
@@ -43,11 +51,18 @@
 body {
   background: var(--bg);
   color: var(--text);
+  background-image: radial-gradient(circle at 1px 1px, rgba(20, 33, 26, 0.05) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+.font-display {
+  font-family: var(--font-display), ui-serif, serif;
+  font-feature-settings: 'ss01' 1;
 }
 
 ::selection {
-  background: var(--primary-tint);
-  color: var(--primary-dark);
+  background: var(--accent-tint);
+  color: var(--accent-dark);
 }
 
 /* ---------- form controls ---------- */
@@ -98,6 +113,32 @@ select.input {
 
 .card-hover {
   @apply transition-all hover:-translate-x-[1px] hover:-translate-y-[1px] hover:shadow-[var(--shadow-md)];
+}
+
+/* A card that needs attention — pending requests, chronic-absence
+   proposals — gets a marigold chalk-mark down the left edge instead of
+   a louder background color, so it reads as flagged without shouting. */
+.card-flag {
+  @apply card border-l-[3px] border-l-[var(--accent)];
+}
+
+/* ---------- tab bars ---------- */
+/* The active tab carries a marigold chalk-underline beneath the usual
+   filled state — the one recurring signature mark that ties every
+   screen back to the notice-board identity. */
+
+.tab-bar {
+  @apply mb-6 flex gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)];
+}
+.tab-btn {
+  @apply relative flex-1 whitespace-nowrap rounded-lg border border-transparent px-3 py-2 text-sm font-bold text-[var(--muted)] transition-all hover:border-[var(--border)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)];
+}
+.tab-btn-active {
+  @apply border-[var(--primary-dark)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)];
+}
+.tab-btn-active::after {
+  content: '';
+  @apply absolute inset-x-3 -bottom-[3px] h-[3px] rounded-full bg-[var(--accent)];
 }
 
 /* ---------- chips / badges ---------- */
