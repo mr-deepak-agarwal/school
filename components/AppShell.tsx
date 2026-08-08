@@ -7,6 +7,15 @@ import { supabase } from '@/lib/supabaseClient'
 
 // Admin-only app: any signed-in non-admin is bounced back to login rather
 // than shown a page meant for admins.
+function greeting(): string {
+  const hour = new Date().getHours()
+  if (hour < 5) return 'Working late'
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  if (hour < 21) return 'Good evening'
+  return 'Working late'
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { teacher, loading } = useCurrentTeacher()
   const router = useRouter()
@@ -48,7 +57,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-[var(--muted)] sm:inline">{teacher.name}</span>
+            <span className="hidden text-sm text-[var(--muted)] sm:inline">
+              {greeting()}, <span className="font-semibold text-[var(--text)]">{teacher.name.split(' ')[0]}</span>
+            </span>
             <button onClick={handleSignOut} className="btn-ghost btn-sm">
               Sign out
             </button>
