@@ -377,6 +377,22 @@ export default function SubstitutionsTab() {
       { onConflict: 'date,timetable_id' }
     )
 
+    // Best-effort — a teacher not having notifications enabled (or the
+    // function not being deployed yet) should never block the assignment
+    // itself from saving.
+    const periodInfo = PERIODS.find((p) => p.period === Number(slot.period))
+    supabase.functions
+      .invoke('send-push', {
+        body: {
+          teacherId: subId,
+          title: `You're covering Period ${slot.period}`,
+          body: `${dayName}, ${date}${periodInfo ? ` \u00b7 ${periodInfo.start}\u2013${periodInfo.end}` : ''} \u00b7 Class ${
+            sectionMap[slot.section_id]
+          } \u00b7 ${slot.subject}`,
+        },
+      })
+      .catch(() => {})
+
     // If the teacher we just assigned had marked themselves preferred for
     // this exact section, that preference has now been used — flag it as
     // fulfilled (rather than deleting it) so it's kept as a record but no
@@ -701,7 +717,9 @@ export default function SubstitutionsTab() {
                         )}
                       </div>
                       {!!entry?.suggested && assignments[slot.id] === entry.suggested.id && (
-                        <p className="mt-1.5 text-xs text-[var(--muted)]">Suggested — free that period.</p>
+                        <p className="mt-1.5 text-xs text-[var(--muted)]">
+                          Pre-filled with the closest match who&rsquo;s free this period — check it and hit Assign, or pick someone else.
+                        </p>
                       )}
                     </div>
                   )}

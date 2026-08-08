@@ -3,16 +3,15 @@
 @tailwind utilities;
 
 :root {
-  /* Off-white surface, dark green as the primary accent. Borders are now a
-     deliberate structural element (bold, ink-dark, always visible) rather
-     than a faint hairline — see --ink / --shadow-hard-*. */
+  /* Off-white surface, dark green as the primary accent. Borders are a
+     visible but soft structural line — not pitch black, not too heavy. */
   --bg: #F5F3EC;
   --surface: #FFFFFF;
   --surface-sunken: #EFEDE3;
   --text: #1B2620;
   --muted: #5B6659;
-  --border: #1B2620;
-  --border-strong: #1B2620;
+  --border: #CBC7B4;
+  --border-strong: #A39D82;
   --ink: #16241C;
 
   --primary: #1E4B36;
@@ -30,11 +29,11 @@
   --danger: #A32A22;
   --danger-bg: #FBEAE8;
 
-  /* Hard, un-blurred offset shadows — the neo-brutalist "this is solid and
-     tappable" cue, used instead of soft blurred shadows throughout. */
-  --shadow-sm: 2px 2px 0 var(--ink);
-  --shadow-md: 4px 4px 0 var(--ink);
-  --shadow-press: 1px 1px 0 var(--ink);
+  /* Soft-ish offset shadow for depth — kept subtle now that borders
+     themselves are thin, so the two don't compete. */
+  --shadow-sm: 1px 1px 3px rgba(22, 36, 28, 0.12);
+  --shadow-md: 2px 3px 8px rgba(22, 36, 28, 0.14);
+  --shadow-press: 0 1px 2px rgba(22, 36, 28, 0.1);
 }
 
 * {
@@ -54,7 +53,7 @@ body {
 /* ---------- form controls ---------- */
 
 .input {
-  @apply w-full rounded-md border-2 border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium outline-none transition-all;
+  @apply w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-medium outline-none transition-all;
 }
 .input:hover {
   @apply border-[var(--primary)];
@@ -73,19 +72,19 @@ select.input {
    button were physically pressed. */
 
 .btn {
-  @apply inline-flex items-center justify-center gap-1.5 rounded-md border-2 border-transparent px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 disabled:active:translate-x-0 disabled:active:translate-y-0 disabled:active:shadow-[var(--shadow-sm)];
+  @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-transparent px-4 py-2 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 disabled:active:translate-x-0 disabled:active:translate-y-0 disabled:active:shadow-[var(--shadow-sm)];
 }
 .btn-primary {
-  @apply btn border-[var(--ink)] bg-[var(--primary)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--primary-dark)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[var(--shadow-press)];
+  @apply btn border-transparent bg-[var(--primary)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--primary-dark)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[var(--shadow-press)];
 }
 .btn-secondary {
-  @apply btn border-[var(--ink)] bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)] hover:bg-[var(--surface-sunken)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[var(--shadow-press)];
+  @apply btn border-[var(--border)] bg-[var(--surface)] text-[var(--text)] shadow-[var(--shadow-sm)] hover:bg-[var(--surface-sunken)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[var(--shadow-press)];
 }
 .btn-ghost {
   @apply btn border-transparent text-[var(--muted)] hover:border-[var(--border)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)];
 }
 .btn-danger {
-  @apply btn border-[var(--ink)] bg-[var(--danger)] text-white shadow-[var(--shadow-sm)] hover:opacity-90 active:translate-x-[2px] active:translate-y-[2px] active:shadow-[var(--shadow-press)];
+  @apply btn border-transparent bg-[var(--danger)] text-white shadow-[var(--shadow-sm)] hover:opacity-90 active:translate-x-[2px] active:translate-y-[2px] active:shadow-[var(--shadow-press)];
 }
 .btn-sm {
   @apply px-3 py-1.5 text-xs;
@@ -94,7 +93,7 @@ select.input {
 /* ---------- cards / surfaces ---------- */
 
 .card {
-  @apply rounded-xl border-2 border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)];
+  @apply rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-sm)];
 }
 
 .card-hover {
@@ -107,7 +106,7 @@ select.input {
   @apply inline-flex items-center gap-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-1.5 text-sm font-semibold transition-all;
 }
 .chip-active {
-  @apply border-[var(--ink)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)];
+  @apply border-[var(--primary-dark)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)];
 }
 .chip:hover:not(.chip-active) {
   @apply border-[var(--primary)] bg-[var(--surface-sunken)];
@@ -139,7 +138,7 @@ select.input {
 }
 
 .divider {
-  @apply border-t-2 border-[var(--border)];
+  @apply border-t border-[var(--border)];
 }
 
 @keyframes fade-in {
