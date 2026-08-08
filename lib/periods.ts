@@ -32,3 +32,24 @@ export function todayISO() {
 export function dayNameForDate(iso: string) {
   return DAY_NAMES_BY_JS_INDEX[new Date(iso + 'T00:00:00').getDay()]
 }
+
+// Half-day leave split — periods 1–6 (through the last pre-lunch slot,
+// 12:30–1:05) count as the "first half"; 7–10 (after the 1:05–1:25 lunch
+// gap) count as the "second half". Adjust here if the school's lunch
+// break ever moves to a different period.
+export const FIRST_HALF_LAST_PERIOD = 6
+
+export type LeaveHalf = 'full' | 'first' | 'second'
+
+export function periodsForHalf(half: LeaveHalf): number[] {
+  const all = PERIODS.map((p) => p.period)
+  if (half === 'first') return all.filter((p) => p <= FIRST_HALF_LAST_PERIOD)
+  if (half === 'second') return all.filter((p) => p > FIRST_HALF_LAST_PERIOD)
+  return all
+}
+
+export function halfLabel(half: LeaveHalf): string {
+  if (half === 'first') return 'Half day (AM)'
+  if (half === 'second') return 'Half day (PM)'
+  return 'Full day'
+}

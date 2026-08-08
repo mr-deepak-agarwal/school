@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabaseClient'
 import type { LeaveRequest, PeriodSwap, PreferredSub, Teacher, TimetableSlot } from '@/lib/types'
 import { teacherTeachesSection, teacherTeachesSubject } from '@/lib/subjectMatch'
 import { swapFor, swapPartner } from '@/lib/periodSwaps'
-import { todayISO, dayNameForDate, toISO, PERIODS } from '@/lib/periods'
+import { todayISO, dayNameForDate, toISO, PERIODS, periodsForHalf, halfLabel, type LeaveHalf } from '@/lib/periods'
 import {
   occupiedPeriods,
   checkWorkload,
@@ -44,8 +44,17 @@ export default function SubstitutionsTab() {
   const [leaveToday, setLeaveToday] = useState<LeaveRequest[]>([])
   const [leaveLoading, setLeaveLoading] = useState(false)
   const [newAbsentId, setNewAbsentId] = useState('')
+  const [newAbsentHalf, setNewAbsentHalf] = useState<LeaveHalf>('full')
   const [markingAbsent, setMarkingAbsent] = useState(false)
   const [showManualPicker, setShowManualPicker] = useState(false)
+
+  // Leave requests teachers submitted themselves from their own panel —
+  // sit here as 'pending' until the admin approves or declines them.
+  // Approving just flips status to 'approved', which is what makes them
+  // show up in leaveToday / count as needing coverage.
+  const [pendingRequests, setPendingRequests] = useState<LeaveRequest[]>([])
+  const [pendingLoading, setPendingLoading] = useState(false)
+  const [decidingId, setDecidingId] = useState<number | null>(null)
 
   // A frequent-absence auto-assign never writes straight to the database —
   // it's computed, shown here for the admin to look over, and only saved
@@ -92,9 +101,31 @@ export default function SubstitutionsTab() {
 
   async function loadLeaveForDate() {
     setLeaveLoading(true)
-    const { data } = await supabase.from('leave_register').select('*').eq('date', date).order('id')
+    const { data } = await supabase.from('leave_register').select('*').eq('date', date).eq('status', 'approved').order('id')
     setLeaveToday((data ?? []) as LeaveRequest[])
     setLeaveLoading(false)
+  }
+
+  // Requests teachers filed themselves for this date that still need a
+  // yes/no from the admin. Kept separate from leaveToday so a pending
+  // request never silently counts as "this teacher is absent" until
+  // someone actually approves it.
+  async function loadPendingRequests() {
+    setPendingLoading(true)
+    const { data } = await supabase.from('leave_register').select('*').eq('date', date).eq('status', 'pending').order('id')
+    setPendingRequests((data ?? []) as LeaveRequest[])
+    setPendingLoading(false)
+  }
+
+  async function decideRequest(request: LeaveRequest, approve: boolean) {
+    setDecidingId(request.id)
+    if (approve) {
+      await supabase.from('leave_register').update({ status: 'approved' }).eq('id', request.id)
+    } else {
+      await supabase.from('leave_register').delete().eq('id', request.id)
+    }
+    setDecidingId(null)
+    await Promise.all([loadPendingRequests(), loadLeaveForDate()])
   }
 
   // Independent of which teacher is selected below — a standing summary of
@@ -129,6 +160,7 @@ export default function SubstitutionsTab() {
 
   useEffect(() => {
     loadLeaveForDate()
+    loadPendingRequests()
     loadDaySubs()
     setAutoNotice(null)
     setPendingAutoAssign(null)
@@ -171,7 +203,7 @@ export default function SubstitutionsTab() {
 
   // ---- Leave-entry flow -------------------------------------------------
 
-  async function markAbsent(teacherId: string) {
+  async function markAbsent(teacherId: string, half: LeaveHalf = 'full') {
     if (!teacherId) return
     setMarkingAbsent(true)
     setAutoNotice(null)
@@ -179,7 +211,7 @@ export default function SubstitutionsTab() {
 
     const { error } = await supabase
       .from('leave_register')
-      .upsert({ date, teacher_id: teacherId, status: 'approved' }, { onConflict: 'date,teacher_id' })
+      .upsert({ date, teacher_id: teacherId, status: 'approved', half }, { onConflict: 'date,teacher_id' })
 
     if (error) {
       console.error('Failed to mark teacher absent', error)
@@ -197,9 +229,11 @@ export default function SubstitutionsTab() {
       .from('leave_register')
       .select('id', { count: 'exact', head: true })
       .eq('teacher_id', teacherId)
+      .eq('status', 'approved')
       .gte('date', toISO(cutoff))
 
     setNewAbsentId('')
+    setNewAbsentHalf('full')
     setAbsentTeacherId(teacherId)
     await loadLeaveForDate()
 
@@ -237,11 +271,22 @@ export default function SubstitutionsTab() {
     loadLeaveForDate()
   }
 
+  // Which half of the day the selected teacher is actually away for — a
+  // half-day leave only needs substitutes for periods in that half; the
+  // rest of their timetable runs as normal. Defaults to 'full' for the
+  // manual-search path, where the teacher may not have a leave row at all.
+  const absentHalf: LeaveHalf = leaveToday.find((l) => l.teacher_id === absentTeacherId)?.half ?? 'full'
+  const coveredHalfPeriods = useMemo(() => new Set(periodsForHalf(absentHalf)), [absentHalf])
+
   // Periods that still need a substitute — anything already handled by a
-  // swap that day is self-covered and doesn't show up here.
+  // swap that day is self-covered, and anything outside the leave's half
+  // (for a half-day leave) doesn't need one either, so neither shows up here.
   const slotsToCover = useMemo(
-    () => absentSlots.filter((slot) => !swapFor(swaps, absentTeacherId, Number(slot.period))),
-    [absentSlots, swaps, absentTeacherId]
+    () =>
+      absentSlots.filter(
+        (slot) => coveredHalfPeriods.has(Number(slot.period)) && !swapFor(swaps, absentTeacherId, Number(slot.period))
+      ),
+    [absentSlots, swaps, absentTeacherId, coveredHalfPeriods]
   )
 
   // teacher -> extra periods they're already covering as a substitute
@@ -451,8 +496,17 @@ export default function SubstitutionsTab() {
           <div className="flex-1">
             <TeacherAutocomplete teachers={teachers} value={newAbsentId} onChange={setNewAbsentId} placeholder="Mark a teacher absent…" />
           </div>
+          <select
+            value={newAbsentHalf}
+            onChange={(e) => setNewAbsentHalf(e.target.value as LeaveHalf)}
+            className="input sm:w-auto"
+          >
+            <option value="full">Full day</option>
+            <option value="first">Half day (AM)</option>
+            <option value="second">Half day (PM)</option>
+          </select>
           <button
-            onClick={() => markAbsent(newAbsentId)}
+            onClick={() => markAbsent(newAbsentId, newAbsentHalf)}
             disabled={!newAbsentId || markingAbsent}
             className="btn-primary sm:w-auto"
           >
@@ -473,6 +527,9 @@ export default function SubstitutionsTab() {
                   className={`chip ${absentTeacherId === l.teacher_id ? 'chip-active' : ''}`}
                 >
                   {teacherMap[l.teacher_id] ?? 'Unknown teacher'}
+                  {l.half !== 'full' && (
+                    <span className="ml-1 text-[10px] font-normal opacity-80">({halfLabel(l.half).replace('Half day ', '')})</span>
+                  )}
                   <span
                     role="button"
                     tabIndex={0}
@@ -505,6 +562,46 @@ export default function SubstitutionsTab() {
           </div>
         )}
       </div>
+
+      {/* ---- Leave requests teachers filed themselves, awaiting a decision ---- */}
+      {(pendingLoading || pendingRequests.length > 0) && (
+        <div className="card mb-5">
+          <h2 className="section-label mb-3">Pending leave requests · {dayName}</h2>
+          {pendingLoading ? (
+            <p className="text-sm text-[var(--muted)]">Loading…</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {pendingRequests.map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] p-3">
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {teacherMap[r.teacher_id] ?? 'Unknown teacher'}{' '}
+                      <span className="font-normal text-[var(--muted)]">— {halfLabel(r.half)}</span>
+                    </p>
+                    {r.reason && <p className="text-xs text-[var(--muted)]">{r.reason}</p>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => decideRequest(r, true)}
+                      disabled={decidingId === r.id}
+                      className="btn-primary btn-sm"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => decideRequest(r, false)}
+                      disabled={decidingId === r.id}
+                      className="btn-ghost btn-sm text-[var(--danger)] hover:bg-[var(--danger-bg)]"
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---- Frequent-absence proposal: nothing is saved until confirmed ---- */}
       {pendingAutoAssign && (
@@ -601,6 +698,18 @@ export default function SubstitutionsTab() {
             {absentSlots.map((slot) => {
               const periodInfo = PERIODS.find((p) => p.period === Number(slot.period))
               const swap = swapFor(swaps, absentTeacherId, Number(slot.period))
+
+              if (!coveredHalfPeriods.has(Number(slot.period))) {
+                return (
+                  <div key={slot.id} className="card flex flex-col opacity-70">
+                    <PeriodHeader period={slot.period} time={periodInfo} badge={<span className="badge-muted shrink-0">In today</span>} />
+                    <p className="mt-2 text-sm font-semibold leading-snug">{slot.subject}</p>
+                    <p className="text-xs text-[var(--muted)]">Class {sectionMap[slot.section_id]}</p>
+                    <div className="divider my-3" />
+                    <p className="text-xs text-[var(--muted)]">Outside their {halfLabel(absentHalf).toLowerCase()} leave — no substitute needed.</p>
+                  </div>
+                )
+              }
 
               if (swap) {
                 const { partnerId, partnerPeriod } = swapPartner(swap, absentTeacherId)
