@@ -106,13 +106,19 @@ export default function SubstitutionsTab() {
     setLeaveLoading(false)
   }
 
-  // Requests teachers filed themselves for this date that still need a
-  // yes/no from the admin. Kept separate from leaveToday so a pending
-  // request never silently counts as "this teacher is absent" until
-  // someone actually approves it.
+  // Requests teachers filed themselves that still need a yes/no from the
+  // admin. Deliberately NOT scoped to the date picker above — otherwise
+  // you'd have to already know which date to check before you could see
+  // anything, which defeats the point of a review queue. Shows every
+  // pending request from today onward, in the order it'll happen.
   async function loadPendingRequests() {
     setPendingLoading(true)
-    const { data } = await supabase.from('leave_register').select('*').eq('date', date).eq('status', 'pending').order('id')
+    const { data } = await supabase
+      .from('leave_register')
+      .select('*')
+      .eq('status', 'pending')
+      .gte('date', todayISO())
+      .order('date')
     setPendingRequests((data ?? []) as LeaveRequest[])
     setPendingLoading(false)
   }
@@ -159,8 +165,12 @@ export default function SubstitutionsTab() {
   }
 
   useEffect(() => {
-    loadLeaveForDate()
     loadPendingRequests()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    loadLeaveForDate()
     loadDaySubs()
     setAutoNotice(null)
     setPendingAutoAssign(null)
@@ -566,7 +576,7 @@ export default function SubstitutionsTab() {
       {/* ---- Leave requests teachers filed themselves, awaiting a decision ---- */}
       {(pendingLoading || pendingRequests.length > 0) && (
         <div className="card mb-5">
-          <h2 className="section-label mb-3">Pending leave requests · {dayName}</h2>
+          <h2 className="section-label mb-3">Pending leave requests</h2>
           {pendingLoading ? (
             <p className="text-sm text-[var(--muted)]">Loading…</p>
           ) : (
@@ -576,13 +586,18 @@ export default function SubstitutionsTab() {
                   <div>
                     <p className="text-sm font-semibold">
                       {teacherMap[r.teacher_id] ?? 'Unknown teacher'}{' '}
-                      <span className="font-normal text-[var(--muted)]">— {halfLabel(r.half)}</span>
+                      <span className="font-normal text-[var(--muted)]">
+                        — {r.date} · {halfLabel(r.half)}
+                      </span>
                     </p>
                     {r.reason && <p className="text-xs text-[var(--muted)]">{r.reason}</p>}
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => decideRequest(r, true)}
+                      onClick={() => {
+                        decideRequest(r, true)
+                        setDate(r.date)
+                      }}
                       disabled={decidingId === r.id}
                       className="btn-primary btn-sm"
                     >
