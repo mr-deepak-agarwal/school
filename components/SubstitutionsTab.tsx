@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import type { LeaveRequest, PeriodSwap, PreferredSub, Teacher, TimetableSlot } from '@/lib/types'
 import { teacherTeachesSection, teacherTeachesSubject } from '@/lib/subjectMatch'
 import { swapFor, swapPartner } from '@/lib/periodSwaps'
-import { todayISO, dayNameForDate, toISO } from '@/lib/periods'
+import { todayISO, dayNameForDate, toISO, PERIODS } from '@/lib/periods'
 import {
   occupiedPeriods,
   checkWorkload,
@@ -580,21 +580,26 @@ export default function SubstitutionsTab() {
               (workload limit: {MAX_PERIODS_PER_DAY} periods/day, {MAX_CONTINUOUS_PERIODS} in a row)
             </span>
           </h3>
-          <ul className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {absentSlots.map((slot) => {
+              const periodInfo = PERIODS.find((p) => p.period === Number(slot.period))
               const swap = swapFor(swaps, absentTeacherId, Number(slot.period))
+
               if (swap) {
                 const { partnerId, partnerPeriod } = swapPartner(swap, absentTeacherId)
                 return (
-                  <li key={slot.id} className="card">
-                    <p className="text-sm font-medium">
-                      Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
+                  <div key={slot.id} className="card flex flex-col">
+                    <PeriodHeader period={slot.period} time={periodInfo} badge={<span className="badge-success shrink-0">Swapped</span>} />
+                    <p className="mt-2 text-sm font-semibold leading-snug">{slot.subject}</p>
+                    <p className="text-xs text-[var(--muted)]">Class {sectionMap[slot.section_id]}</p>
+                    <div className="divider my-3" />
+                    <p className="text-sm font-medium text-[var(--success)]">
+                      {teacherMap[partnerId] ?? 'Another teacher'} covers this
+                      <span className="block text-xs font-normal text-[var(--muted)]">
+                        (Period {partnerPeriod} swapped back in return)
+                      </span>
                     </p>
-                    <p className="mt-2 text-sm font-medium text-[var(--success)]">
-                      Covered via swap — {teacherMap[partnerId] ?? 'another teacher'} takes this period (Period{' '}
-                      {partnerPeriod} swapped in return)
-                    </p>
-                  </li>
+                  </div>
                 )
               }
 
@@ -604,20 +609,20 @@ export default function SubstitutionsTab() {
               const isEditing = editingSlotId === slot.id
 
               return (
-                <li key={slot.id} className="card card-hover">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium">
-                      Period {slot.period} · {slot.subject} · Section {sectionMap[slot.section_id]}
-                    </p>
-                    {assigned && !isEditing && <span className="badge-success shrink-0">Covered</span>}
-                  </div>
+                <div key={slot.id} className="card card-hover flex flex-col">
+                  <PeriodHeader
+                    period={slot.period}
+                    time={periodInfo}
+                    badge={assigned && !isEditing ? <span className="badge-success shrink-0">Covered</span> : undefined}
+                  />
+                  <p className="mt-2 text-sm font-semibold leading-snug">{slot.subject}</p>
+                  <p className="text-xs text-[var(--muted)]">Class {sectionMap[slot.section_id]}</p>
+                  <div className="divider my-3" />
 
                   {assigned && !isEditing ? (
-                    <>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-[var(--success)]">
-                          Assigned: {teacherMap[assigned.substitute_teacher_id]}
-                        </p>
+                    <div className="mt-auto">
+                      <p className="text-sm font-medium text-[var(--success)]">{teacherMap[assigned.substitute_teacher_id]}</p>
+                      <div className="mt-2 flex gap-2">
                         <button onClick={() => startEdit(slot)} className="btn-ghost btn-sm">
                           Edit
                         </button>
@@ -632,61 +637,61 @@ export default function SubstitutionsTab() {
                       {autoPreferredNotes[slot.id] && (
                         <p className="mt-1.5 text-xs text-[var(--accent)]">{autoPreferredNotes[slot.id]}</p>
                       )}
-                    </>
+                    </div>
                   ) : (
-                    <>
+                    <div className="mt-auto">
+                      <select
+                        value={assignments[slot.id] ?? ''}
+                        onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
+                        className="input"
+                      >
+                        <option value="">Select substitute…</option>
+                        {entry && entry.preferredSection.length > 0 && (
+                          <optgroup label="✓ Marked preferred for this section">
+                            {entry.preferredSection.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {entry && entry.sameSubject.length > 0 && (
+                          <optgroup label="Teaches this subject to this section">
+                            {entry.sameSubject.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {entry && entry.sameSection.length > 0 && (
+                          <optgroup label="Teaches this section (other subject)">
+                            {entry.sameSection.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {entry && entry.other.length > 0 && (
+                          <optgroup label="⚠ Doesn't teach this section — emergency only">
+                            {entry.other.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                                {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
                       <div className="mt-2 flex gap-2">
-                        <select
-                          value={assignments[slot.id] ?? ''}
-                          onChange={(e) => setAssignments((a) => ({ ...a, [slot.id]: e.target.value }))}
-                          className="input flex-1"
-                        >
-                          <option value="">Select substitute…</option>
-                          {entry && entry.preferredSection.length > 0 && (
-                            <optgroup label="✓ Marked preferred for this section">
-                              {entry.preferredSection.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name}
-                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                          {entry && entry.sameSubject.length > 0 && (
-                            <optgroup label="Teaches this subject to this section">
-                              {entry.sameSubject.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name}
-                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                          {entry && entry.sameSection.length > 0 && (
-                            <optgroup label="Teaches this section (other subject)">
-                              {entry.sameSection.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name}
-                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                          {entry && entry.other.length > 0 && (
-                            <optgroup label="⚠ Doesn't teach this section — emergency only">
-                              {entry.other.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name}
-                                  {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )}
-                        </select>
                         <button
                           onClick={() => assign(slot)}
                           disabled={!assignments[slot.id] || saving === slot.id}
-                          className="btn-primary"
+                          className="btn-primary flex-1"
                         >
                           {isEditing ? 'Save' : 'Assign'}
                         </button>
@@ -698,17 +703,41 @@ export default function SubstitutionsTab() {
                       </div>
                       {isSuggested && (
                         <p className="mt-1.5 text-xs text-[var(--muted)]">
-                          Suggested — free that period. Change the dropdown if you&rsquo;d rather pick someone else.
+                          Suggested — free that period.
                         </p>
                       )}
-                    </>
+                    </div>
                   )}
-                </li>
+                </div>
               )
             })}
-          </ul>
+          </div>
         </>
       )}
+    </div>
+  )
+}
+
+function PeriodHeader({
+  period,
+  time,
+  badge,
+}: {
+  period: number
+  time?: { start: string; end: string }
+  badge?: ReactNode
+}) {
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div>
+        <span className="badge-muted">Period {period}</span>
+        {time && (
+          <span className="ml-1.5 text-[11px] text-[var(--muted)]">
+            {time.start}–{time.end}
+          </span>
+        )}
+      </div>
+      {badge}
     </div>
   )
 }
