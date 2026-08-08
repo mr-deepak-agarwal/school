@@ -15,6 +15,7 @@
   --primary: #1E4B36;
   --primary-dark: #123726;
   --primary-tint: #E5EDE7;
+  --primary-ring: rgba(30, 75, 54, 0.18);
 
   --accent: #A98B3B;
   --accent-tint: #F5EEDC;
@@ -53,7 +54,7 @@ body {
   @apply border-[var(--border-strong)];
 }
 .input:focus {
-  @apply border-[var(--primary)] ring-2 ring-[var(--primary)]/15;
+  @apply border-[var(--primary)] ring-2 ring-[var(--primary-ring)];
 }
 
 select.input {
