@@ -16,11 +16,13 @@ export default function TeacherPreferredPanel({ teacher }: { teacher: Teacher })
 
   async function load() {
     setLoading(true)
-    const [{ data: s }, { data: p }] = await Promise.all([
+    const [{ data: s }, { data: p }, { data: tt }] = await Promise.all([
       supabase.from('sections').select('*').order('class').order('section'),
       supabase.from('preferred_substitutions').select('*').eq('teacher_id', teacher.id).eq('preferred', true).order('id'),
+      supabase.from('timetable').select('section_id').eq('teacher_id', teacher.id),
     ])
-    setSections((s ?? []) as Section[])
+    const taughtSectionIds = new Set(((tt ?? []) as { section_id: number }[]).map((r) => r.section_id))
+    setSections(((s ?? []) as Section[]).filter((sec) => taughtSectionIds.has(sec.id)))
     setPrefs((p ?? []) as PreferredSub[])
     setLoading(false)
   }
@@ -61,6 +63,8 @@ export default function TeacherPreferredPanel({ teacher }: { teacher: Teacher })
         </p>
         {loading ? (
           <p className="text-sm text-[var(--muted)]">Loading…</p>
+        ) : sections.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No classes found on your timetable yet — check back once it&rsquo;s set up.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {sections.map((s) => {
