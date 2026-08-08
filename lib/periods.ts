@@ -33,6 +33,45 @@ export function dayNameForDate(iso: string) {
   return DAY_NAMES_BY_JS_INDEX[new Date(iso + 'T00:00:00').getDay()]
 }
 
+// ---- Week helpers -------------------------------------------------------
+// Used by the Timetable tab's week picker: the grid always shows a full
+// Mon–Fri week, so navigation works in whole-week steps rather than single
+// days — picking "a day" to see a 5-day grid was the confusing part.
+
+export function addDays(iso: string, n: number): string {
+  const d = new Date(iso + 'T00:00:00')
+  d.setDate(d.getDate() + n)
+  return toISO(d)
+}
+
+// Monday of the week containing this date, as an ISO string.
+export function mondayOfWeek(iso: string): string {
+  const d = new Date(iso + 'T00:00:00')
+  const jsDay = d.getDay() // 0 = Sunday .. 6 = Saturday
+  const diffToMonday = jsDay === 0 ? -6 : 1 - jsDay
+  d.setDate(d.getDate() + diffToMonday)
+  return toISO(d)
+}
+
+// The five weekday dates (Mon–Fri) for the week starting at mondayIso,
+// in the same order as DAYS.
+export function weekDates(mondayIso: string): string[] {
+  return DAYS.map((_, i) => addDays(mondayIso, i))
+}
+
+export function formatWeekLabel(mondayIso: string): string {
+  const fridayIso = addDays(mondayIso, 4)
+  const mon = new Date(mondayIso + 'T00:00:00')
+  const fri = new Date(fridayIso + 'T00:00:00')
+  const sameMonth = mon.getMonth() === fri.getMonth() && mon.getFullYear() === fri.getFullYear()
+  const monStr = mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const friStr = fri.toLocaleDateString(
+    'en-US',
+    sameMonth ? { day: 'numeric', year: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }
+  )
+  return `${monStr} – ${friStr}`
+}
+
 // Half-day leave split — periods 1–6 (through the last pre-lunch slot,
 // 12:30–1:05) count as the "first half"; 7–10 (after the 1:05–1:25 lunch
 // gap) count as the "second half". Adjust here if the school's lunch

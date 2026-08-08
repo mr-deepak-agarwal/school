@@ -4,26 +4,34 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import type { PeriodSwap, Section, Teacher, TimetableSlot } from '@/lib/types'
 import { swapFor, swapPartner } from '@/lib/periodSwaps'
-import { PERIODS, DAYS, todayISO, dayNameForDate } from '@/lib/periods'
+import { PERIODS, DAYS, todayISO, mondayOfWeek, weekDates, formatWeekLabel, addDays } from '@/lib/periods'
 
 export default function TimetableViewTab() {
-  const [date, setDate] = useState(todayISO())
+  // The grid always shows a full Mon–Fri week, so navigation moves by
+  // whole weeks (weekStart = that week's Monday) rather than picking a
+  // single date to land on — a single-day picker never matched what was
+  // actually on screen.
+  const [weekStart, setWeekStart] = useState(mondayOfWeek(todayISO()))
   const [sections, setSections] = useState<Section[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [teacherId, setTeacherId] = useState('')
   const [classFilter, setClassFilter] = useState('')
   const [sectionId, setSectionId] = useState('')
   const [slots, setSlots] = useState<TimetableSlot[]>([])
-  const [subsByTimetableId, setSubsByTimetableId] = useState<Record<number, string>>({})
-  const [swaps, setSwaps] = useState<PeriodSwap[]>([])
+  // Keyed by `${date}|${timetable_id}` so each concrete date in the week
+  // gets its own substitution/swap lookup instead of sharing one.
+  const [subsByKey, setSubsByKey] = useState<Record<string, string>>({})
+  const [swapsByDate, setSwapsByDate] = useState<Record<string, PeriodSwap[]>>({})
   // Periods this teacher has picked up as a substitute for someone else —
   // shown in their own timetable so it's obvious they're not free then.
-  const [coveringSlots, setCoveringSlots] = useState<
-    { period: number; section_id: number; subject: string; original_teacher_id: string }[]
-  >([])
+  // Keyed by date since a different week can have different coverage.
+  const [coveringByDate, setCoveringByDate] = useState<
+    Record<string, { period: number; section_id: number; subject: string; original_teacher_id: string }[]>
+  >({})
   const [loading, setLoading] = useState(false)
 
-  const todaysDayName = useMemo(() => dayNameForDate(date), [date])
+  const today = todayISO()
+  const dates = useMemo(() => weekDates(weekStart), [weekStart])
 
   useEffect(() => {
     async function loadStatic() {
@@ -73,50 +81,55 @@ export default function TimetableViewTab() {
               .order('period')
       setSlots((data ?? []) as TimetableSlot[])
 
-      // Pull substitutions + swaps for the selected date so the grid can show
-      // coverage info on whichever day-of-week that date falls on.
+      // Pull substitutions + swaps for every date in the displayed week,
+      // not just one — each weekday row needs its own date's coverage.
       const [{ data: subs }, { data: swapRows }] = await Promise.all([
-        supabase.from('substitutions').select('*').eq('date', date),
-        supabase.from('period_swaps').select('*').eq('swap_date', date),
+        supabase.from('substitutions').select('*').in('date', dates),
+        supabase.from('period_swaps').select('*').in('swap_date', dates),
       ])
-      setSubsByTimetableId(Object.fromEntries((subs ?? []).map((s: any) => [s.timetable_id, s.substitute_teacher_id])))
-      setSwaps((swapRows ?? []) as PeriodSwap[])
+      setSubsByKey(
+        Object.fromEntries((subs ?? []).map((s: any) => [`${s.date}|${s.timetable_id}`, s.substitute_teacher_id]))
+      )
+      const swapsGrouped: Record<string, PeriodSwap[]> = {}
+      for (const s of (swapRows ?? []) as PeriodSwap[]) {
+        ;(swapsGrouped[s.swap_date] ??= []).push(s)
+      }
+      setSwapsByDate(swapsGrouped)
 
       // If we're looking at one teacher's timetable, also pull in any
-      // periods they've picked up as a substitute that date — otherwise
-      // their timetable would (wrongly) look free during those periods.
+      // periods they've picked up as a substitute across the week —
+      // otherwise their timetable would (wrongly) look free during those
+      // periods on the dates they're actually covering.
       if (mode === 'teacher') {
         const { data: coverSubs } = await supabase
           .from('substitutions')
           .select('*')
           .eq('substitute_teacher_id', teacherId)
-          .eq('date', date)
-        const timetableIds = (coverSubs ?? []).map((s: any) => s.timetable_id)
+          .in('date', dates)
+        const timetableIds = Array.from(new Set((coverSubs ?? []).map((s: any) => s.timetable_id)))
         const { data: coverTimetable } =
           timetableIds.length > 0 ? await supabase.from('timetable').select('*').in('id', timetableIds) : { data: [] }
         const timetableById = Object.fromEntries(((coverTimetable ?? []) as any[]).map((t) => [t.id, t]))
-        setCoveringSlots(
-          (coverSubs ?? [])
-            .map((s: any) => {
-              const row = timetableById[s.timetable_id]
-              if (!row) return null
-              return {
-                period: Number(row.period),
-                section_id: row.section_id,
-                subject: row.subject,
-                original_teacher_id: s.original_teacher_id,
-              }
-            })
-            .filter(Boolean) as { period: number; section_id: number; subject: string; original_teacher_id: string }[]
-        )
+        const grouped: Record<string, { period: number; section_id: number; subject: string; original_teacher_id: string }[]> = {}
+        for (const s of (coverSubs ?? []) as any[]) {
+          const row = timetableById[s.timetable_id]
+          if (!row) continue
+          ;(grouped[s.date] ??= []).push({
+            period: Number(row.period),
+            section_id: row.section_id,
+            subject: row.subject,
+            original_teacher_id: s.original_teacher_id,
+          })
+        }
+        setCoveringByDate(grouped)
       } else {
-        setCoveringSlots([])
+        setCoveringByDate({})
       }
 
       setLoading(false)
     }
     load()
-  }, [mode, teacherId, sectionId, date])
+  }, [mode, teacherId, sectionId, dates])
 
   function clearOtherFilters(next: 'teacher' | 'section') {
     if (next === 'teacher') {
@@ -131,8 +144,44 @@ export default function TimetableViewTab() {
     <div>
       <div className="card mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
-          <label className="mb-1 block text-sm font-medium">Date</label>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+          <label className="mb-1 block text-sm font-medium">Week</label>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setWeekStart((w) => addDays(w, -7))}
+              className="btn-secondary btn-sm px-2"
+              aria-label="Previous week"
+              type="button"
+            >
+              ‹
+            </button>
+            <span className="flex-1 whitespace-nowrap px-1 text-center text-sm font-semibold">
+              {formatWeekLabel(weekStart)}
+            </span>
+            <button
+              onClick={() => setWeekStart((w) => addDays(w, 7))}
+              className="btn-secondary btn-sm px-2"
+              aria-label="Next week"
+              type="button"
+            >
+              ›
+            </button>
+          </div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <button
+              onClick={() => setWeekStart(mondayOfWeek(today))}
+              className="text-xs font-medium text-[var(--muted)] hover:text-[var(--primary)]"
+              type="button"
+            >
+              This week
+            </button>
+            <input
+              type="date"
+              value={weekStart}
+              onChange={(e) => setWeekStart(mondayOfWeek(e.target.value))}
+              aria-label="Jump to the week containing a specific date"
+              className="input !w-auto flex-1 !py-1 !px-2 text-xs"
+            />
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Teacher</label>
@@ -233,84 +282,85 @@ export default function TimetableViewTab() {
             </tr>
           </thead>
           <tbody>
-            {DAYS.map((day) => (
-              <tr key={day} className={day === todaysDayName ? 'bg-[var(--primary)]/5' : undefined}>
-                <td className="border-r border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-[11px] font-semibold uppercase text-[var(--muted)]">
-                  {day.slice(0, 3)}
-                  {day === todaysDayName && (
-                    <div className="mt-0.5 text-[9px] font-normal normal-case text-[var(--primary)]">{date}</div>
-                  )}
-                </td>
-                {PERIODS.map((p) => {
-                  const covering =
-                    mode === 'teacher' && day === todaysDayName
-                      ? coveringSlots.find((c) => c.period === p.period)
-                      : undefined
+            {DAYS.map((day, dayIndex) => {
+              const rowDate = dates[dayIndex]
+              const isToday = rowDate === today
+              const rowSwaps = swapsByDate[rowDate] ?? []
+              const rowCovering = coveringByDate[rowDate] ?? []
 
-                  if (covering) {
+              return (
+                <tr key={day} className={isToday ? 'bg-[var(--primary)]/5' : undefined}>
+                  <td className="border-r border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2 text-[11px] font-semibold uppercase text-[var(--muted)]">
+                    {day.slice(0, 3)}
+                    <div className={`mt-0.5 text-[9px] font-normal normal-case ${isToday ? 'text-[var(--primary)]' : 'text-[var(--muted)]'}`}>
+                      {rowDate}
+                    </div>
+                  </td>
+                  {PERIODS.map((p) => {
+                    const covering = mode === 'teacher' ? rowCovering.find((c) => c.period === p.period) : undefined
+
+                    if (covering) {
+                      return (
+                        <td
+                          key={p.period}
+                          className="border-b border-[var(--border)] bg-[var(--primary-tint)] px-1.5 py-2 align-top"
+                        >
+                          <div className="truncate text-xs font-medium leading-tight" title={covering.subject}>
+                            {covering.subject}
+                          </div>
+                          <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
+                            Class {sectionMap[covering.section_id] ?? ''}
+                          </div>
+                          <div className="mt-1 truncate text-[10px] font-medium text-[var(--primary)]">
+                            Covering for {teacherMap[covering.original_teacher_id] ?? '?'}
+                          </div>
+                        </td>
+                      )
+                    }
+
+                    const slot = slots.find((s) => s.day === day && s.period === p.period)
+                    if (!slot) {
+                      return (
+                        <td
+                          key={p.period}
+                          className="border-b border-[var(--border)] px-1 py-2 text-center text-xs text-[var(--muted)]"
+                        >
+                          —
+                        </td>
+                      )
+                    }
+
+                    const subId = subsByKey[`${rowDate}|${slot.id}`]
+                    const swap = slot.teacher_id ? swapFor(rowSwaps, slot.teacher_id, Number(slot.period)) : undefined
+
                     return (
-                      <td
-                        key={p.period}
-                        className="border-b border-[var(--border)] bg-[var(--primary-tint)] px-1.5 py-2 align-top"
-                      >
-                        <div className="truncate text-xs font-medium leading-tight" title={covering.subject}>
-                          {covering.subject}
+                      <td key={p.period} className="border-b border-[var(--border)] px-1.5 py-2 align-top">
+                        <div className="truncate text-xs font-medium leading-tight" title={slot.subject}>
+                          {slot.subject}
                         </div>
                         <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
-                          Class {sectionMap[covering.section_id] ?? ''}
+                          {mode === 'teacher'
+                            ? `Class ${sectionMap[slot.section_id] ?? ''}`
+                            : slot.teacher_id
+                              ? teacherMap[slot.teacher_id]
+                              : 'Unassigned'}
                         </div>
-                        <div className="mt-1 truncate text-[10px] font-medium text-[var(--primary)]">
-                          Covering for {teacherMap[covering.original_teacher_id] ?? '?'}
-                        </div>
+                        {subId && (
+                          <div className="mt-1 truncate text-[10px] font-medium text-[var(--danger)]">
+                            Sub: {teacherMap[subId] ?? '?'}
+                          </div>
+                        )}
+                        {swap && (
+                          <div className="mt-1 truncate text-[10px] font-medium text-[var(--warn)]">
+                            Swap: {teacherMap[swapPartner(swap, slot.teacher_id!).partnerId] ?? '?'}
+                          </div>
+                        )}
                       </td>
                     )
-                  }
-
-                  const slot = slots.find((s) => s.day === day && s.period === p.period)
-                  if (!slot) {
-                    return (
-                      <td
-                        key={p.period}
-                        className="border-b border-[var(--border)] px-1 py-2 text-center text-xs text-[var(--muted)]"
-                      >
-                        —
-                      </td>
-                    )
-                  }
-
-                  const subId = day === todaysDayName ? subsByTimetableId[slot.id] : undefined
-                  const swap =
-                    day === todaysDayName && slot.teacher_id
-                      ? swapFor(swaps, slot.teacher_id, Number(slot.period))
-                      : undefined
-
-                  return (
-                    <td key={p.period} className="border-b border-[var(--border)] px-1.5 py-2 align-top">
-                      <div className="truncate text-xs font-medium leading-tight" title={slot.subject}>
-                        {slot.subject}
-                      </div>
-                      <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
-                        {mode === 'teacher'
-                          ? `Class ${sectionMap[slot.section_id] ?? ''}`
-                          : slot.teacher_id
-                            ? teacherMap[slot.teacher_id]
-                            : 'Unassigned'}
-                      </div>
-                      {subId && (
-                        <div className="mt-1 truncate text-[10px] font-medium text-[var(--danger)]">
-                          Sub: {teacherMap[subId] ?? '?'}
-                        </div>
-                      )}
-                      {swap && (
-                        <div className="mt-1 truncate text-[10px] font-medium text-[var(--warn)]">
-                          Swap: {teacherMap[swapPartner(swap, slot.teacher_id!).partnerId] ?? '?'}
-                        </div>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
+                  })}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
