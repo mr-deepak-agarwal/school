@@ -386,9 +386,17 @@ export default function SubstitutionsTab() {
 
       // Last-resort fallback: free, but doesn't teach this section at all.
       // Kept so admin is never fully stuck, but never auto-suggested.
+      // Sorted so anyone who happens to teach this exact subject (just to
+      // a different section) floats to the top — they're still a much
+      // better emergency pick than someone with no connection to the
+      // subject at all, even though they don't know this particular class.
       const other = eligible
         .filter((t) => !preferredSectionIds.has(t.id) && !sameSubjectIds.has(t.id) && !sameSectionIds.has(t.id))
-        .sort(byCapacityThenName)
+        .sort((a, b) => {
+          const aMatch = teacherTeachesSubject(a, slot.subject) ? 0 : 1
+          const bMatch = teacherTeachesSubject(b, slot.subject) ? 0 : 1
+          return aMatch - bMatch || byCapacityThenName(a, b)
+        })
 
       // Auto-suggest only picks from within-capacity candidates — being
       // over the limit is fine to offer, never fine to default to.
@@ -811,6 +819,7 @@ export default function SubstitutionsTab() {
                             {entry.sameSection.map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}
+                                {t.subjects && t.subjects.length > 0 ? ` (${t.subjects.join(', ')})` : ''}
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                               </option>
                             ))}
@@ -821,6 +830,11 @@ export default function SubstitutionsTab() {
                             {entry.other.map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}
+                                {teacherTeachesSubject(t, slot.subject)
+                                  ? ` (teaches ${slot.subject} elsewhere)`
+                                  : t.subjects && t.subjects.length > 0
+                                  ? ` (${t.subjects.join(', ')})`
+                                  : ''}
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                               </option>
                             ))}
