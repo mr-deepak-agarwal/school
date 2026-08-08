@@ -381,7 +381,7 @@ export default function SubstitutionsTab() {
     // function not being deployed yet) should never block the assignment
     // itself from saving.
     const periodInfo = PERIODS.find((p) => p.period === Number(slot.period))
-    const originalTeacherName = teacherMap[slot.teacher_id] ?? 'a teacher'
+    const originalTeacherName = (slot.teacher_id ? teacherMap[slot.teacher_id] : undefined) ?? 'a teacher'
     supabase.functions
       .invoke('send-push', {
         body: {
