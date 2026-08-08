@@ -381,14 +381,15 @@ export default function SubstitutionsTab() {
     // function not being deployed yet) should never block the assignment
     // itself from saving.
     const periodInfo = PERIODS.find((p) => p.period === Number(slot.period))
+    const originalTeacherName = teacherMap[slot.teacher_id] ?? 'a teacher'
     supabase.functions
       .invoke('send-push', {
         body: {
           teacherId: subId,
-          title: `You're covering Period ${slot.period}`,
+          title: `You're covering Period ${slot.period} for ${originalTeacherName}`,
           body: `${dayName}, ${date}${periodInfo ? ` \u00b7 ${periodInfo.start}\u2013${periodInfo.end}` : ''} \u00b7 Class ${
             sectionMap[slot.section_id]
-          } \u00b7 ${slot.subject}`,
+          } \u00b7 ${slot.subject} \u00b7 filling in for ${originalTeacherName}`,
         },
       })
       .catch(() => {})
