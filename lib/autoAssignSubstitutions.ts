@@ -12,26 +12,25 @@ export interface AutoAssignResult {
 }
 
 /**
- * Runs when a teacher's leave is approved for a given date.
- * For every period that teacher was due to take that day:
+ * Works out what a leave-triggered auto-assign WOULD do for every period
+ * that teacher was due to take that day, but does not write anything to
+ * the database. The admin reviews this proposal and explicitly confirms
+ * before `commitAutoAssignments` is called — nothing gets substituted
+ * behind their back.
+ *
+ * Matching order per period:
  *   1. Prefer a teacher who (a) teaches the same subject and (b) has an active
  *      (not yet fulfilled) preference to substitute for that exact section
- *      (`preferred_substitutions`, no longer date-scoped).
- *   2. Otherwise, any teacher who teaches the same subject and is free that period
- *      (not on leave, not already teaching another class, not already covering
- *      another substitution at that period).
- *   3. Otherwise the slot is left unassigned for the admin to allocate manually
- *      on the Substitutions page.
- *
- * Writes matches straight into `substitutions`, and flags any preference row
- * that got used as `fulfilled` so it stops being suggested for that section
- * again but stays around as a record. Slots that already have a substitution
- * recorded (e.g. an admin assigned one ahead of time) are left alone.
+ *      (`preferred_substitutions`).
+ *   2. Otherwise, any teacher who teaches the same subject, is free that
+ *      period (not on leave, not already teaching, not already covering
+ *      another substitution then), and is within the workload limits
+ *      (5 periods/day, max 3 in a row).
+ *   3. Otherwise the slot is left unassigned for the admin to allocate
+ *      manually. Slots that already have a substitution recorded (e.g. an
+ *      admin assigned one ahead of time) are left alone.
  */
-export async function autoAssignSubstitutionsForLeave(
-  teacherId: string,
-  date: string
-): Promise<AutoAssignResult> {
+export async function computeAutoAssignments(teacherId: string, date: string): Promise<AutoAssignResult> {
   const dayName = DAY_NAMES[new Date(date + 'T00:00:00').getDay()]
 
   const { data: slots } = await supabase
@@ -94,7 +93,7 @@ export async function autoAssignSubstitutionsForLeave(
 
   // Tracks, per teacher, every period they hold today — their normal load
   // plus anything already picked up as a substitute (including ones this
-  // very pass hands out) — so the 5-periods / 3-in-a-row workload caps are
+  // very pass proposes) — so the 5-periods / 3-in-a-row workload caps are
   // respected instead of piling everything onto the first free name.
   const extraPeriodsByTeacher = new Map<string, number[]>()
   for (const s of (existingSubs ?? []) as any[]) {
@@ -107,8 +106,6 @@ export async function autoAssignSubstitutionsForLeave(
 
   const assigned: AutoAssignResult['assigned'] = []
   const unassigned: TimetableSlot[] = []
-  const toInsert: any[] = []
-  const fulfilledPrefIds = new Set<number>()
 
   for (const slot of slots as TimetableSlot[]) {
     if (alreadyCoveredTimetableIds.has(slot.id)) continue
@@ -140,38 +137,51 @@ export async function autoAssignSubstitutionsForLeave(
     const preferredMatch = candidates.find((t) => preferredBySection.has(`${t.id}:${slot.section_id}`))
     const chosen = preferredMatch ?? candidates[0]
 
+    // Reserve this pick against later periods in the same proposal, so we
+    // don't double-book the same teacher twice before anything is saved.
     busy.add(String(chosen.id))
     const chosenExtra = extraPeriodsByTeacher.get(chosen.id) ?? []
     chosenExtra.push(slotPeriod)
     extraPeriodsByTeacher.set(chosen.id, chosenExtra)
 
     assigned.push({ slot, teacher: chosen, viaPreference: !!preferredMatch })
-    toInsert.push({
-      date,
-      timetable_id: slot.id,
-      original_teacher_id: slot.teacher_id,
-      substitute_teacher_id: chosen.id,
-    })
-
-    if (preferredMatch) {
-      const usedPref = preferredBySection.get(`${preferredMatch.id}:${slot.section_id}`)
-      if (usedPref) fulfilledPrefIds.add(usedPref.id)
-    }
-  }
-
-  if (toInsert.length > 0) {
-    await supabase.from('substitutions').upsert(toInsert, { onConflict: 'date,timetable_id' })
-  }
-
-  if (fulfilledPrefIds.size > 0) {
-    await supabase.from('preferred_substitutions').update({ fulfilled: true }).in('id', [...fulfilledPrefIds])
-  }
-
-  // Frequent-cover check: anyone who's now covered a section enough times
-  // gets automatically opted in as a preferred substitute for it.
-  for (const a of assigned) {
-    await maybeAutoMarkPreferred(a.teacher.id, a.slot.section_id)
   }
 
   return { assigned, unassigned }
+}
+
+/**
+ * Actually writes a previously-computed proposal to the database, once the
+ * admin has reviewed and confirmed it. Marks any preference row that got
+ * used as `fulfilled`, and opts a substitute in as preferred for a section
+ * once they've covered it enough times.
+ */
+export async function commitAutoAssignments(date: string, assigned: AutoAssignResult['assigned']): Promise<void> {
+  if (assigned.length === 0) return
+
+  const toInsert = assigned.map((a) => ({
+    date,
+    timetable_id: a.slot.id,
+    original_teacher_id: a.slot.teacher_id,
+    substitute_teacher_id: a.teacher.id,
+  }))
+  await supabase.from('substitutions').upsert(toInsert, { onConflict: 'date,timetable_id' })
+
+  for (const a of assigned) {
+    const { data: pref } = await supabase
+      .from('preferred_substitutions')
+      .select('id')
+      .eq('teacher_id', a.teacher.id)
+      .eq('section_id', a.slot.section_id)
+      .eq('preferred', true)
+      .eq('fulfilled', false)
+      .maybeSingle()
+    if (pref) {
+      await supabase.from('preferred_substitutions').update({ fulfilled: true }).eq('id', pref.id)
+    }
+
+    // Frequent-cover check: anyone who's now covered a section enough
+    // times gets automatically opted in as a preferred substitute for it.
+    await maybeAutoMarkPreferred(a.teacher.id, a.slot.section_id)
+  }
 }

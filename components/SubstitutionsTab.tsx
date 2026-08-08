@@ -15,10 +15,20 @@ import {
   FREQUENT_ABSENCE_WINDOW_DAYS,
 } from '@/lib/workload'
 import { maybeAutoMarkPreferred } from '@/lib/autoPreferred'
-import { autoAssignSubstitutionsForLeave } from '@/lib/autoAssignSubstitutions'
+import { computeAutoAssignments, commitAutoAssignments, type AutoAssignResult } from '@/lib/autoAssignSubstitutions'
 import TeacherAutocomplete from './TeacherAutocomplete'
 
 type SubRow = { id: number; substitute_teacher_id: string }
+
+type DaySubRow = {
+  id: number
+  timetable_id: number
+  period: number
+  section_id: number
+  subject: string
+  original_teacher_id: string
+  substitute_teacher_id: string
+}
 
 export default function SubstitutionsTab() {
   const [date, setDate] = useState(todayISO())
@@ -35,8 +45,21 @@ export default function SubstitutionsTab() {
   const [leaveLoading, setLeaveLoading] = useState(false)
   const [newAbsentId, setNewAbsentId] = useState('')
   const [markingAbsent, setMarkingAbsent] = useState(false)
-  const [autoNotice, setAutoNotice] = useState<string | null>(null)
   const [showManualPicker, setShowManualPicker] = useState(false)
+
+  // A frequent-absence auto-assign never writes straight to the database —
+  // it's computed, shown here for the admin to look over, and only saved
+  // if they explicitly confirm it.
+  const [pendingAutoAssign, setPendingAutoAssign] = useState<{ teacherId: string; result: AutoAssignResult } | null>(
+    null
+  )
+  const [applyingAutoAssign, setApplyingAutoAssign] = useState(false)
+  const [autoNotice, setAutoNotice] = useState<string | null>(null)
+
+  // Every substitution already on the books for the selected date, shown
+  // up front regardless of which teacher (if any) is selected below.
+  const [daySubs, setDaySubs] = useState<DaySubRow[]>([])
+  const [daySubsLoading, setDaySubsLoading] = useState(false)
 
   const [absentSlots, setAbsentSlots] = useState<TimetableSlot[]>([])
   const [dayTimetable, setDayTimetable] = useState<TimetableSlot[]>([])
@@ -74,11 +97,43 @@ export default function SubstitutionsTab() {
     setLeaveLoading(false)
   }
 
+  // Independent of which teacher is selected below — a standing summary of
+  // everything already substituted for this date, so the admin can see the
+  // whole day's coverage at a glance without clicking into each teacher.
+  async function loadDaySubs() {
+    setDaySubsLoading(true)
+    const [{ data: subs }, { data: dayRows }] = await Promise.all([
+      supabase.from('substitutions').select('*').eq('date', date),
+      supabase.from('timetable').select('*').eq('day', dayName),
+    ])
+    const rowById = Object.fromEntries(((dayRows ?? []) as any[]).map((r) => [r.id, r]))
+    const rows = ((subs ?? []) as any[])
+      .map((s) => {
+        const row = rowById[s.timetable_id]
+        if (!row) return null
+        return {
+          id: s.id,
+          timetable_id: s.timetable_id,
+          period: Number(row.period),
+          section_id: row.section_id,
+          subject: row.subject,
+          original_teacher_id: s.original_teacher_id,
+          substitute_teacher_id: s.substitute_teacher_id,
+        } as DaySubRow
+      })
+      .filter((r): r is DaySubRow => r !== null)
+      .sort((a, b) => a.period - b.period)
+    setDaySubs(rows)
+    setDaySubsLoading(false)
+  }
+
   useEffect(() => {
     loadLeaveForDate()
+    loadDaySubs()
     setAutoNotice(null)
+    setPendingAutoAssign(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date])
+  }, [date, dayName])
 
   async function loadForDate() {
     if (!absentTeacherId) {
@@ -120,6 +175,7 @@ export default function SubstitutionsTab() {
     if (!teacherId) return
     setMarkingAbsent(true)
     setAutoNotice(null)
+    setPendingAutoAssign(null)
 
     const { error } = await supabase
       .from('leave_register')
@@ -133,8 +189,8 @@ export default function SubstitutionsTab() {
 
     // Chronic-absence check: how many times has this teacher been marked
     // absent in the last FREQUENT_ABSENCE_WINDOW_DAYS? If it crosses the
-    // threshold, don't make the admin fill every period by hand — run the
-    // same matching the auto-assign pass uses and just show the result.
+    // threshold, work out a proposed set of substitutions — but don't save
+    // anything yet. The admin reviews and explicitly approves it below.
     const cutoff = new Date(date + 'T00:00:00')
     cutoff.setDate(cutoff.getDate() - FREQUENT_ABSENCE_WINDOW_DAYS)
     const { count } = await supabase
@@ -148,16 +204,32 @@ export default function SubstitutionsTab() {
     await loadLeaveForDate()
 
     if ((count ?? 0) >= FREQUENT_ABSENCE_THRESHOLD) {
-      const result = await autoAssignSubstitutionsForLeave(teacherId, date)
-      setAutoNotice(
-        `${teacherMap[teacherId] ?? 'This teacher'} has been absent ${count} times in the last ${FREQUENT_ABSENCE_WINDOW_DAYS} days, so their periods were auto-assigned (${result.assigned.length} covered${
-          result.unassigned.length ? `, ${result.unassigned.length} still need a pick` : ''
-        }). Review below and adjust anything you'd like changed.`
-      )
-      await loadForDate()
+      const result = await computeAutoAssignments(teacherId, date)
+      if (result.assigned.length > 0) {
+        setPendingAutoAssign({ teacherId, result })
+      }
     }
 
     setMarkingAbsent(false)
+  }
+
+  async function confirmAutoAssign() {
+    if (!pendingAutoAssign) return
+    setApplyingAutoAssign(true)
+    const { teacherId, result } = pendingAutoAssign
+    await commitAutoAssignments(date, result.assigned)
+    setAutoNotice(
+      `Applied — ${teacherMap[teacherId] ?? 'this teacher'}'s periods were substituted (${result.assigned.length} covered${
+        result.unassigned.length ? `, ${result.unassigned.length} still need a pick` : ''
+      }).`
+    )
+    setPendingAutoAssign(null)
+    setApplyingAutoAssign(false)
+    await Promise.all([loadForDate(), loadDaySubs()])
+  }
+
+  function dismissAutoAssign() {
+    setPendingAutoAssign(null)
   }
 
   async function unmarkAbsent(id: number) {
@@ -312,7 +384,7 @@ export default function SubstitutionsTab() {
 
     setSaving(null)
     setEditingSlotId(null)
-    loadForDate()
+    await Promise.all([loadForDate(), loadDaySubs()])
   }
 
   async function removeSubstitution(slot: TimetableSlot) {
@@ -322,7 +394,7 @@ export default function SubstitutionsTab() {
     await supabase.from('substitutions').delete().eq('id', existing.id)
     setSaving(null)
     setEditingSlotId(null)
-    loadForDate()
+    await Promise.all([loadForDate(), loadDaySubs()])
   }
 
   function startEdit(slot: TimetableSlot) {
@@ -402,12 +474,79 @@ export default function SubstitutionsTab() {
         )}
       </div>
 
+      {/* ---- Frequent-absence proposal: nothing is saved until confirmed ---- */}
+      {pendingAutoAssign && (
+        <div className="card mb-5 border-[var(--accent)]/50 animate-fade-in">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="badge-accent">Needs your OK</span>
+            <p className="text-sm font-medium">
+              {teacherMap[pendingAutoAssign.teacherId] ?? 'This teacher'} has been absent often lately — here&rsquo;s a
+              proposed set of substitutes. Nothing has been saved yet.
+            </p>
+          </div>
+          <ul className="mt-3 space-y-1.5">
+            {pendingAutoAssign.result.assigned.map((a) => (
+              <li key={a.slot.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="w-16 shrink-0 text-[var(--muted)]">Period {a.slot.period}</span>
+                <span className="shrink-0">
+                  Class {sectionMap[a.slot.section_id]} · {a.slot.subject}
+                </span>
+                <span className="text-[var(--muted)]">→</span>
+                <span className="font-medium">{a.teacher.name}</span>
+                {a.viaPreference && <span className="badge-success">Preferred</span>}
+              </li>
+            ))}
+          </ul>
+          {pendingAutoAssign.result.unassigned.length > 0 && (
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              {pendingAutoAssign.result.unassigned.length} period(s) couldn&rsquo;t be matched automatically and will
+              need a manual pick below either way.
+            </p>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button onClick={confirmAutoAssign} disabled={applyingAutoAssign} className="btn-primary">
+              {applyingAutoAssign ? 'Applying…' : 'Looks good — apply these'}
+            </button>
+            <button onClick={dismissAutoAssign} disabled={applyingAutoAssign} className="btn-secondary">
+              No, I&rsquo;ll assign manually
+            </button>
+          </div>
+        </div>
+      )}
+
       {autoNotice && (
-        <div className="card mb-5 border-[var(--accent)]/40 bg-[var(--accent-tint)] text-sm text-[var(--text)]">
-          <span className="badge-accent mr-2">Auto-assigned</span>
+        <div className="card mb-5 border-[var(--success)]/40 bg-[var(--success-bg)] text-sm text-[var(--text)]">
+          <span className="badge-success mr-2">Done</span>
           {autoNotice}
         </div>
       )}
+
+      {/* ---- Today's substitutions, at a glance ---- */}
+      <div className="card mb-5">
+        <h2 className="section-label mb-3">
+          Substitutions for {dayName}, {date}
+        </h2>
+        {daySubsLoading ? (
+          <p className="text-sm text-[var(--muted)]">Loading…</p>
+        ) : daySubs.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No substitutions recorded yet for this date.</p>
+        ) : (
+          <ul className="divide-y divide-[var(--border)]">
+            {daySubs.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm first:pt-0 last:pb-0">
+                <span className="w-16 shrink-0 text-[var(--muted)]">Period {s.period}</span>
+                <span className="shrink-0">
+                  Class {sectionMap[s.section_id]} · {s.subject}
+                </span>
+                <span className="text-[var(--muted)]">
+                  {teacherMap[s.original_teacher_id] ?? 'Unknown'} <span aria-hidden>→</span>
+                </span>
+                <span className="font-medium">{teacherMap[s.substitute_teacher_id] ?? 'Unknown'}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {/* ---- Step 2: their timetable + substitution picks ---- */}
       {!absentTeacherId ? (
