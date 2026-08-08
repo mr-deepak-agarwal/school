@@ -36,10 +36,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b-2 border-[var(--border)] bg-[var(--surface)]">
         <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3.5">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)] text-sm font-semibold text-white">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border-2 border-[var(--ink)] bg-[var(--primary)] text-sm font-bold text-white shadow-[var(--shadow-press)]">
               S
             </span>
             <div>

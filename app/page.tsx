@@ -24,15 +24,15 @@ function MainContent() {
 
   return (
     <div>
-      <div className="mb-6 flex gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
+      <div className="mb-6 flex gap-1 overflow-x-auto rounded-xl border-2 border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`flex-1 whitespace-nowrap rounded-lg border-2 px-3 py-2 text-sm font-bold transition-all ${
               tab === t
-                ? 'bg-[var(--primary)] text-white shadow-sm'
-                : 'text-[var(--muted)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
+                ? 'border-[var(--ink)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)]'
+                : 'border-transparent text-[var(--muted)] hover:border-[var(--border)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
             }`}
           >
             {t}

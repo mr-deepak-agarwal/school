@@ -13,15 +13,15 @@ export default function SetupTab() {
 
   return (
     <div>
-      <div className="mb-6 flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
+      <div className="mb-6 flex gap-1 rounded-xl border-2 border-[var(--border)] bg-[var(--surface)] p-1 shadow-[var(--shadow-sm)]">
         {SUB_TABS.map((t) => (
           <button
             key={t}
             onClick={() => setSubTab(t)}
-            className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
+            className={`flex-1 rounded-lg border-2 py-2 text-sm font-bold transition-all ${
               subTab === t
-                ? 'bg-[var(--primary)] text-white shadow-sm'
-                : 'text-[var(--muted)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
+                ? 'border-[var(--ink)] bg-[var(--primary)] text-white shadow-[var(--shadow-press)]'
+                : 'border-transparent text-[var(--muted)] hover:border-[var(--border)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]'
             }`}
           >
             {t}
