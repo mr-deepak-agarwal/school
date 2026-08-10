@@ -276,9 +276,19 @@ export default function SubstitutionsTab() {
     setPendingAutoAssign(null)
   }
 
-  async function unmarkAbsent(id: number) {
-    await supabase.from('leave_register').delete().eq('id', id)
-    loadLeaveForDate()
+  async function unmarkAbsent(request: LeaveRequest) {
+    // Removing the leave should undo everything that leave caused —
+    // otherwise you're left with substitution rows (and an open
+    // assignment panel below) for a teacher who, as far as the record
+    // now shows, was never marked absent in the first place.
+    await Promise.all([
+      supabase.from('leave_register').delete().eq('id', request.id),
+      supabase.from('substitutions').delete().eq('date', request.date).eq('original_teacher_id', request.teacher_id),
+    ])
+    if (absentTeacherId === request.teacher_id) {
+      setAbsentTeacherId('')
+    }
+    await Promise.all([loadLeaveForDate(), loadDaySubs()])
   }
 
   // Which half of the day the selected teacher is actually away for — a
@@ -553,7 +563,7 @@ export default function SubstitutionsTab() {
                     tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation()
-                      unmarkAbsent(l.id)
+                      unmarkAbsent(l)
                     }}
                     className={`ml-1 rounded-full px-1 text-xs leading-none ${
                       absentTeacherId === l.teacher_id ? 'text-white/70 hover:text-white' : 'text-[var(--muted)] hover:text-[var(--danger)]'
