@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import type { LeaveRequest, PeriodSwap, PreferredSub, Teacher, TimetableSlot } from '@/lib/types'
 import { teacherTeachesSection, teacherTeachesSubject } from '@/lib/subjectMatch'
-import { swapFor, swapPartner } from '@/lib/periodSwaps'
+import { swapFor, swapPartner, isCoveredBySwap, isSelfSwap } from '@/lib/periodSwaps'
 import { todayISO, dayNameForDate, toISO, PERIODS, periodsForHalf, halfLabel, type LeaveHalf } from '@/lib/periods'
 import {
   occupiedPeriods,
@@ -174,6 +174,13 @@ export default function SubstitutionsTab() {
     loadDaySubs()
     setAutoNotice(null)
     setPendingAutoAssign(null)
+    // The selected teacher's timetable/assignment panel is date-specific —
+    // without this, switching dates keeps showing whoever was picked on
+    // the previous date, even though they may not be absent (or even have
+    // a leave request at all) on the new one. Always start a fresh date
+    // with nobody selected; picking a leave chip or searching a teacher
+    // for THIS date is what should open the panel, not a stale carryover.
+    setAbsentTeacherId('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, dayName])
 
@@ -304,7 +311,7 @@ export default function SubstitutionsTab() {
   const slotsToCover = useMemo(
     () =>
       absentSlots.filter(
-        (slot) => coveredHalfPeriods.has(Number(slot.period)) && !swapFor(swaps, absentTeacherId, Number(slot.period))
+        (slot) => coveredHalfPeriods.has(Number(slot.period)) && !isCoveredBySwap(swaps, absentTeacherId, Number(slot.period))
       ),
     [absentSlots, swaps, absentTeacherId, coveredHalfPeriods]
   )
@@ -529,9 +536,17 @@ export default function SubstitutionsTab() {
             onChange={(e) => setNewAbsentHalf(e.target.value as LeaveHalf)}
             className="input sm:w-auto"
           >
-            <option value="full">Full day</option>
-            <option value="first">Half day (AM)</option>
-            <option value="second">Half day (PM)</option>
+            <option value="full">{halfLabel('full')}</option>
+            <optgroup label="Half day">
+              <option value="first">{halfLabel('first')}</option>
+              <option value="second">{halfLabel('second')}</option>
+            </optgroup>
+            <optgroup label="Quarter day">
+              <option value="q1">{halfLabel('q1')}</option>
+              <option value="q2">{halfLabel('q2')}</option>
+              <option value="q3">{halfLabel('q3')}</option>
+              <option value="q4">{halfLabel('q4')}</option>
+            </optgroup>
           </select>
           <button
             onClick={() => markAbsent(newAbsentId, newAbsentHalf)}
@@ -744,7 +759,7 @@ export default function SubstitutionsTab() {
                 )
               }
 
-              if (swap) {
+              if (swap && !isSelfSwap(swap)) {
                 const { partnerId, partnerPeriod } = swapPartner(swap, absentTeacherId)
                 return (
                   <div key={slot.id} className="card flex flex-col">
@@ -775,6 +790,11 @@ export default function SubstitutionsTab() {
                   />
                   <p className="mt-2 text-sm font-semibold leading-snug">{slot.subject}</p>
                   <p className="text-xs text-[var(--muted)]">Class {sectionMap[slot.section_id]}</p>
+                  {swap && isSelfSwap(swap) && (
+                    <p className="mt-1 text-xs text-[var(--accent-dark)]">
+                      Self-swapped with their own Period {swapPartner(swap, absentTeacherId).partnerPeriod} — still needs a substitute.
+                    </p>
+                  )}
                   <div className="divider my-3" />
 
                   {assigned && !isEditing ? (

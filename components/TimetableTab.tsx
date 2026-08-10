@@ -19,8 +19,6 @@ export default function TimetableTab() {
     period: '',
     subject: '',
     teacher_id: '',
-    start_time: '',
-    end_time: '',
   })
   const [error, setError] = useState('')
 
@@ -57,14 +55,16 @@ export default function TimetableTab() {
     setError('')
     if (!sectionId || !form.period || !form.subject) return
 
+    const periodInfo = PERIODS.find((p) => p.period === Number(form.period))
+
     const { error } = await supabase.from('timetable').insert({
       day: form.day,
       period: Number(form.period),
       subject: form.subject,
       teacher_id: form.teacher_id || null,
       section_id: sectionId,
-      start_time: form.start_time || null,
-      end_time: form.end_time || null,
+      start_time: periodInfo?.start ?? null,
+      end_time: periodInfo?.end ?? null,
     })
 
     if (error) {
@@ -72,7 +72,7 @@ export default function TimetableTab() {
       return
     }
 
-    setForm({ day: form.day, period: '', subject: '', teacher_id: '', start_time: '', end_time: '' })
+    setForm({ day: form.day, period: '', subject: '', teacher_id: '' })
     loadSlots()
   }
 
@@ -119,13 +119,21 @@ export default function TimetableTab() {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Period</label>
-          <input
+          <select
             required
-            type="number"
             value={form.period}
             onChange={(e) => setForm({ ...form, period: e.target.value })}
             className="input"
-          />
+          >
+            <option value="" disabled>
+              Choose a period…
+            </option>
+            {PERIODS.map((p) => (
+              <option key={p.period} value={p.period}>
+                P{p.period} · {p.start}–{p.end}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Subject</label>
@@ -150,24 +158,6 @@ export default function TimetableTab() {
               </option>
             ))}
           </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Start time</label>
-          <input
-            type="time"
-            value={form.start_time}
-            onChange={(e) => setForm({ ...form, start_time: e.target.value })}
-            className="input"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">End time</label>
-          <input
-            type="time"
-            value={form.end_time}
-            onChange={(e) => setForm({ ...form, end_time: e.target.value })}
-            className="input"
-          />
         </div>
         <div className="col-span-2 sm:col-span-3">
           {error && <p className="mb-2 text-sm text-[var(--danger)]">{error}</p>}

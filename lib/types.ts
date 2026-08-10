@@ -34,7 +34,7 @@ export interface LeaveRequest {
   teacher_id: string
   reason: string | null
   status: 'pending' | 'approved'
-  half: 'full' | 'first' | 'second'
+  half: 'full' | 'first' | 'second' | 'q1' | 'q2' | 'q3' | 'q4'
 }
 
 export interface Substitution {

@@ -78,17 +78,46 @@ export function formatWeekLabel(mondayIso: string): string {
 // break ever moves to a different period.
 export const FIRST_HALF_LAST_PERIOD = 6
 
-export type LeaveHalf = 'full' | 'first' | 'second'
+export type LeaveHalf = 'full' | 'first' | 'second' | 'q1' | 'q2' | 'q3' | 'q4'
+
+// Quarters split each half evenly in two: Q1/Q2 make up the first half,
+// Q3/Q4 make up the second half — so a quarter is always a strict subset
+// of the matching half, and the two systems never disagree.
+function splitEven(periods: number[], parts: number): number[][] {
+  const size = Math.ceil(periods.length / parts)
+  const chunks: number[][] = []
+  for (let i = 0; i < parts; i++) chunks.push(periods.slice(i * size, (i + 1) * size))
+  return chunks
+}
+
+const ALL_PERIOD_NUMBERS = PERIODS.map((p) => p.period)
+const FIRST_HALF_PERIODS = ALL_PERIOD_NUMBERS.filter((p) => p <= FIRST_HALF_LAST_PERIOD)
+const SECOND_HALF_PERIODS = ALL_PERIOD_NUMBERS.filter((p) => p > FIRST_HALF_LAST_PERIOD)
+const [Q1_PERIODS, Q2_PERIODS] = splitEven(FIRST_HALF_PERIODS, 2)
+const [Q3_PERIODS, Q4_PERIODS] = splitEven(SECOND_HALF_PERIODS, 2)
 
 export function periodsForHalf(half: LeaveHalf): number[] {
-  const all = PERIODS.map((p) => p.period)
-  if (half === 'first') return all.filter((p) => p <= FIRST_HALF_LAST_PERIOD)
-  if (half === 'second') return all.filter((p) => p > FIRST_HALF_LAST_PERIOD)
-  return all
+  if (half === 'first') return FIRST_HALF_PERIODS
+  if (half === 'second') return SECOND_HALF_PERIODS
+  if (half === 'q1') return Q1_PERIODS
+  if (half === 'q2') return Q2_PERIODS
+  if (half === 'q3') return Q3_PERIODS
+  if (half === 'q4') return Q4_PERIODS
+  return ALL_PERIOD_NUMBERS
+}
+
+function rangeLabel(periods: number[]): string {
+  if (periods.length === 0) return ''
+  if (periods.length === 1) return `P${periods[0]}`
+  return `P${periods[0]}–P${periods[periods.length - 1]}`
 }
 
 export function halfLabel(half: LeaveHalf): string {
   if (half === 'first') return 'Half day (AM)'
   if (half === 'second') return 'Half day (PM)'
+  if (half === 'q1') return `Quarter 1 (${rangeLabel(Q1_PERIODS)})`
+  if (half === 'q2') return `Quarter 2 (${rangeLabel(Q2_PERIODS)})`
+  if (half === 'q3') return `Quarter 3 (${rangeLabel(Q3_PERIODS)})`
+  if (half === 'q4') return `Quarter 4 (${rangeLabel(Q4_PERIODS)})`
   return 'Full day'
 }

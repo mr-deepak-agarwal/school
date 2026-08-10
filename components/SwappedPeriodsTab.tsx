@@ -14,6 +14,7 @@ function PeriodPicker({
   value,
   onChange,
   sectionMap,
+  excludePeriod,
 }: {
   slots: TimetableSlot[]
   swaps: PeriodSwap[]
@@ -21,6 +22,7 @@ function PeriodPicker({
   value: number | null
   onChange: (period: number) => void
   sectionMap: Record<number, string>
+  excludePeriod?: number | null
 }) {
   if (!teacherId) return <p className="text-sm text-[var(--muted)]">Pick a teacher first.</p>
   if (slots.length === 0) return <p className="text-sm text-[var(--muted)]">No periods that day.</p>
@@ -30,14 +32,16 @@ function PeriodPicker({
       {slots.map((slot) => {
         const period = Number(slot.period)
         const alreadySwapped = !!swapFor(swaps, teacherId, period)
+        const isExcluded = excludePeriod != null && period === excludePeriod
+        const disabled = alreadySwapped || isExcluded
         const selected = value === period
         return (
           <button
             key={slot.id}
             type="button"
-            disabled={alreadySwapped}
+            disabled={disabled}
             onClick={() => onChange(period)}
-            title={alreadySwapped ? 'This period is already part of a swap' : undefined}
+            title={alreadySwapped ? 'This period is already part of a swap' : isExcluded ? 'Already picked as the other side of this swap' : undefined}
             className={`rounded-md border px-2.5 py-1.5 text-left text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
               selected
                 ? 'border-[var(--primary)] bg-[var(--primary)]/10'
@@ -65,6 +69,12 @@ export default function SwappedPeriodsTab() {
   const [teacherBId, setTeacherBId] = useState('')
   const [periodA, setPeriodA] = useState<number | null>(null)
   const [periodB, setPeriodB] = useState<number | null>(null)
+  // Self-swap: trading two of your OWN periods on the same day, e.g. "my
+  // 6B period for my own 7A period" — no second teacher involved. Keeps
+  // teacherB silently mirrored to teacherA rather than reusing the normal
+  // two-teacher form, since the picker and the "who covers this" phrasing
+  // both need to read differently for it.
+  const [selfSwap, setSelfSwap] = useState(false)
 
   const [slotsA, setSlotsA] = useState<TimetableSlot[]>([])
   const [slotsB, setSlotsB] = useState<TimetableSlot[]>([])
@@ -95,6 +105,22 @@ export default function SwappedPeriodsTab() {
     loadSwaps()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date])
+
+  useEffect(() => {
+    if (selfSwap) {
+      setTeacherBId(teacherAId)
+    } else {
+      setTeacherBId('')
+    }
+    setPeriodA(null)
+    setPeriodB(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selfSwap])
+
+  useEffect(() => {
+    if (selfSwap) setTeacherBId(teacherAId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teacherAId])
 
   useEffect(() => {
     setPeriodA(null)
@@ -161,10 +187,15 @@ export default function SwappedPeriodsTab() {
         </div>
       </div>
 
-      <div className="mb-5 grid grid-cols-1 gap-4 card md:grid-cols-2">
+      <label className="mb-4 flex items-center gap-2 text-sm font-medium">
+        <input type="checkbox" checked={selfSwap} onChange={(e) => setSelfSwap(e.target.checked)} className="h-4 w-4 accent-[var(--primary)]" />
+        Self-swap — trade two of the same teacher&rsquo;s own periods (no second teacher needed)
+      </label>
+
+      <div className={`mb-5 grid grid-cols-1 gap-4 card ${selfSwap ? '' : 'md:grid-cols-2'}`}>
         <div>
-          <label className="mb-1 block text-sm font-medium">Teacher A</label>
-          <TeacherAutocomplete teachers={teachers} value={teacherAId} onChange={setTeacherAId} excludeId={teacherBId} />
+          <label className="mb-1 block text-sm font-medium">{selfSwap ? 'Teacher' : 'Teacher A'}</label>
+          <TeacherAutocomplete teachers={teachers} value={teacherAId} onChange={setTeacherAId} excludeId={selfSwap ? undefined : teacherBId} />
           <div className="mt-3">
             <PeriodPicker
               slots={slotsA}
@@ -173,13 +204,13 @@ export default function SwappedPeriodsTab() {
               value={periodA}
               onChange={setPeriodA}
               sectionMap={sectionMap}
+              excludePeriod={selfSwap ? periodB : undefined}
             />
           </div>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium">Teacher B</label>
-          <TeacherAutocomplete teachers={teachers} value={teacherBId} onChange={setTeacherBId} excludeId={teacherAId} />
-          <div className="mt-3">
+        {selfSwap ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium">Swap into which of their own periods?</label>
             <PeriodPicker
               slots={slotsB}
               swaps={swaps}
@@ -187,15 +218,42 @@ export default function SwappedPeriodsTab() {
               value={periodB}
               onChange={setPeriodB}
               sectionMap={sectionMap}
+              excludePeriod={periodA}
             />
           </div>
-        </div>
+        ) : (
+          <div>
+            <label className="mb-1 block text-sm font-medium">Teacher B</label>
+            <TeacherAutocomplete teachers={teachers} value={teacherBId} onChange={setTeacherBId} excludeId={teacherAId} />
+            <div className="mt-3">
+              <PeriodPicker
+                slots={slotsB}
+                swaps={swaps}
+                teacherId={teacherBId}
+                value={periodB}
+                onChange={setPeriodB}
+                sectionMap={sectionMap}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {periodA !== null && periodB !== null && (
         <p className="mb-3 text-sm text-[var(--muted)]">
-          {teacherMap[teacherAId]} takes Period {periodB} for {teacherMap[teacherBId]}, and {teacherMap[teacherBId]}{' '}
-          takes Period {periodA} for {teacherMap[teacherAId]}.
+          {selfSwap ? (
+            <>
+              {teacherMap[teacherAId]} now teaches Class {sectionMap[slotsB.find((s) => Number(s.period) === periodB)?.section_id ?? -1]} in
+              Period {periodA} (moved from Period {periodB}), and Class{' '}
+              {sectionMap[slotsA.find((s) => Number(s.period) === periodA)?.section_id ?? -1]} in Period {periodB} (moved from Period{' '}
+              {periodA}).
+            </>
+          ) : (
+            <>
+              {teacherMap[teacherAId]} takes Period {periodB} for {teacherMap[teacherBId]}, and {teacherMap[teacherBId]} takes Period{' '}
+              {periodA} for {teacherMap[teacherAId]}.
+            </>
+          )}
         </p>
       )}
 
@@ -217,10 +275,18 @@ export default function SwappedPeriodsTab() {
               key={s.id}
               className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5"
             >
-              <span className="text-sm">
-                <span className="font-medium">{teacherMap[s.teacher_a] ?? '?'}</span> (Period {s.period_a}) ↔{' '}
-                <span className="font-medium">{teacherMap[s.teacher_b] ?? '?'}</span> (Period {s.period_b})
-              </span>
+              {s.teacher_a === s.teacher_b ? (
+                <span className="text-sm">
+                  <span className="font-medium">{teacherMap[s.teacher_a] ?? '?'}</span>{' '}
+                  <span className="badge-accent mr-1">Self-swap</span>
+                  Period {s.period_a} ↔ Period {s.period_b}
+                </span>
+              ) : (
+                <span className="text-sm">
+                  <span className="font-medium">{teacherMap[s.teacher_a] ?? '?'}</span> (Period {s.period_a}) ↔{' '}
+                  <span className="font-medium">{teacherMap[s.teacher_b] ?? '?'}</span> (Period {s.period_b})
+                </span>
+              )}
               <button onClick={() => removeSwap(s.id)} className="text-xs text-[var(--danger)] hover:underline">
                 Remove
               </button>

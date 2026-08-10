@@ -76,9 +76,17 @@ export default function TeacherLeavePanel({ teacher }: { teacher: Teacher }) {
           <div>
             <label className="mb-1 block text-sm font-medium">Duration</label>
             <select value={half} onChange={(e) => setHalf(e.target.value as LeaveHalf)} className="input w-full">
-              <option value="full">Full day</option>
-              <option value="first">Half day (AM)</option>
-              <option value="second">Half day (PM)</option>
+              <option value="full">{halfLabel('full')}</option>
+              <optgroup label="Half day">
+                <option value="first">{halfLabel('first')}</option>
+                <option value="second">{halfLabel('second')}</option>
+              </optgroup>
+              <optgroup label="Quarter day">
+                <option value="q1">{halfLabel('q1')}</option>
+                <option value="q2">{halfLabel('q2')}</option>
+                <option value="q3">{halfLabel('q3')}</option>
+                <option value="q4">{halfLabel('q4')}</option>
+              </optgroup>
             </select>
           </div>
           <div className="sm:col-span-1">

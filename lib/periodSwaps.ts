@@ -12,6 +12,26 @@ export function swapFor(swaps: PeriodSwap[], teacherId: string, period: number):
   )
 }
 
+// A self-swap is a teacher trading two of their OWN periods (same
+// teacher on both sides) — different class, same person. Distinguished
+// from a normal swap because it changes nothing about who's needed to
+// cover the day: if this teacher is later marked absent, both periods
+// still need a real substitute, unlike a normal swap where the other
+// teacher already has it covered.
+export function isSelfSwap(swap: PeriodSwap): boolean {
+  return swap.teacher_a === swap.teacher_b
+}
+
+/**
+ * Whether this teacher's period is covered by someone ELSE via a swap —
+ * i.e. a genuine two-teacher trade, not a self-swap. This is the check
+ * that should gate "no substitute needed for this period".
+ */
+export function isCoveredBySwap(swaps: PeriodSwap[], teacherId: string, period: number): boolean {
+  const swap = swapFor(swaps, teacherId, period)
+  return !!swap && !isSelfSwap(swap)
+}
+
 /**
  * Whether this teacher's period on this date is already handled by a swap
  * (they've traded it with another teacher), so it should be skipped when
