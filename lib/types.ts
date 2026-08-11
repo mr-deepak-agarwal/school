@@ -17,6 +17,15 @@ export interface Section {
   section: string
 }
 
+// A general "this teacher covers this subject for this section" record,
+// independent of any specific period/time slot in the Timetable tab.
+export interface TeachingAssignment {
+  id: number
+  teacher_id: string
+  subject: string
+  section_id: number
+}
+
 export interface TimetableSlot {
   id: number
   day: string

@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import type { Section, Teacher } from '@/lib/types'
+import type { Section, Teacher, TeachingAssignment } from '@/lib/types'
 
 export default function TeachersTab() {
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [sections, setSections] = useState<Section[]>([])
+  const [assignments, setAssignments] = useState<TeachingAssignment[]>([])
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({
     name: '',
@@ -20,12 +21,14 @@ export default function TeachersTab() {
   const [saving, setSaving] = useState(false)
 
   async function load() {
-    const [{ data: t }, { data: s }] = await Promise.all([
+    const [{ data: t }, { data: s }, { data: a }] = await Promise.all([
       supabase.from('teachers').select('*').order('name'),
       supabase.from('sections').select('*'),
+      supabase.from('teaching_assignments').select('*'),
     ])
     setTeachers((t ?? []) as Teacher[])
     setSections((s ?? []) as Section[])
+    setAssignments((a ?? []) as TeachingAssignment[])
   }
 
   useEffect(() => {
@@ -95,6 +98,23 @@ export default function TeachersTab() {
   async function updateSubjects(id: string, subjects: string[]) {
     setTeachers((prev) => prev.map((t) => (t.id === id ? { ...t, subjects } : t)))
     const { error } = await supabase.from('teachers').update({ subjects }).eq('id', id)
+    if (error) load()
+  }
+
+  async function addAssignment(teacherId: string, subject: string, sectionId: number) {
+    const { data, error } = await supabase
+      .from('teaching_assignments')
+      .insert({ teacher_id: teacherId, subject, section_id: sectionId })
+      .select()
+      .single()
+    if (!error && data) {
+      setAssignments((prev) => [...prev, data as TeachingAssignment])
+    }
+  }
+
+  async function removeAssignment(id: number) {
+    setAssignments((prev) => prev.filter((a) => a.id !== id))
+    const { error } = await supabase.from('teaching_assignments').delete().eq('id', id)
     if (error) load()
   }
 
@@ -206,6 +226,16 @@ export default function TeachersTab() {
                 ))}
               </select>
             </div>
+            <div className="mt-2 flex items-start gap-2 text-xs text-[var(--muted)]">
+              <span className="mt-1 shrink-0">Teaches:</span>
+              <AssignmentsEditor
+                teacher={t}
+                sections={sections}
+                assignments={assignments.filter((a) => a.teacher_id === t.id)}
+                onAdd={(subject, sectionId) => addAssignment(t.id, subject, sectionId)}
+                onRemove={removeAssignment}
+              />
+            </div>
           </li>
         ))}
       </ul>
@@ -267,6 +297,99 @@ function SubjectsEditor({ teacher, onChange }: { teacher: Teacher; onChange: (su
         placeholder={teacher.subjects.length ? 'Add…' : 'No subjects set — add one'}
         className="min-w-[7rem] flex-1 border-none bg-transparent text-xs outline-none placeholder:text-[var(--muted)]"
       />
+    </div>
+  )
+}
+
+function AssignmentsEditor({
+  teacher,
+  sections,
+  assignments,
+  onAdd,
+  onRemove,
+}: {
+  teacher: Teacher
+  sections: Section[]
+  assignments: TeachingAssignment[]
+  onAdd: (subject: string, sectionId: number) => void
+  onRemove: (id: number) => void
+}) {
+  const [subject, setSubject] = useState('')
+  const [sectionId, setSectionId] = useState('')
+
+  function sectionLabel(id: number) {
+    const s = sections.find((sec) => sec.id === id)
+    return s ? `${s.class}${s.section}` : id
+  }
+
+  function handleAdd() {
+    if (!subject || !sectionId) return
+    const alreadyExists = assignments.some((a) => a.subject === subject && a.section_id === Number(sectionId))
+    if (!alreadyExists) onAdd(subject, Number(sectionId))
+    setSectionId('')
+  }
+
+  return (
+    <div className="flex flex-1 flex-col gap-1.5">
+      {assignments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {assignments.map((a) => (
+            <span key={a.id} className="inline-flex items-center gap-1 rounded-full bg-[var(--bg)] px-2 py-0.5">
+              {a.subject} · {sectionLabel(a.section_id)}
+              <button
+                type="button"
+                onClick={() => onRemove(a.id)}
+                className="text-[var(--muted)] hover:text-[var(--danger)]"
+                aria-label={`Remove ${a.subject} in ${sectionLabel(a.section_id)}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <select
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          className="rounded-md border border-[var(--border)] px-1.5 py-1 text-xs"
+        >
+          <option value="" disabled>
+            Subject…
+          </option>
+          {teacher.subjects.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <select
+          value={sectionId}
+          onChange={(e) => setSectionId(e.target.value)}
+          className="rounded-md border border-[var(--border)] px-1.5 py-1 text-xs"
+        >
+          <option value="" disabled>
+            Section…
+          </option>
+          {sections.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.class}
+              {s.section}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={!subject || !sectionId}
+          className="text-[var(--primary)] disabled:text-[var(--muted)]"
+        >
+          + Add
+        </button>
+      </div>
+      {teacher.subjects.length === 0 && (
+        <p className="text-[11px] text-[var(--muted)]">Add subjects above first to assign a section.</p>
+      )}
     </div>
   )
 }
