@@ -92,6 +92,12 @@ export default function TeachersTab() {
     load()
   }
 
+  async function updateSubjects(id: string, subjects: string[]) {
+    setTeachers((prev) => prev.map((t) => (t.id === id ? { ...t, subjects } : t)))
+    const { error } = await supabase.from('teachers').update({ subjects }).eq('id', id)
+    if (error) load()
+  }
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -169,9 +175,7 @@ export default function TeachersTab() {
                 <p className="text-sm font-medium">
                   {t.name} <span className="text-[var(--muted)]">· {t.teacher_code}</span>
                 </p>
-                <p className="text-xs text-[var(--muted)]">
-                  {t.email} · {t.subjects.join(', ') || 'No subjects set'}
-                </p>
+                <p className="text-xs text-[var(--muted)]">{t.email}</p>
               </div>
               <select
                 value={t.role}
@@ -181,6 +185,10 @@ export default function TeachersTab() {
                 <option value="teacher">Teacher</option>
                 <option value="admin">Admin</option>
               </select>
+            </div>
+            <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted)]">
+              <span className="shrink-0">Subjects:</span>
+              <SubjectsEditor teacher={t} onChange={(subjects) => updateSubjects(t.id, subjects)} />
             </div>
             <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted)]">
               <span>Class teacher of:</span>
@@ -201,6 +209,64 @@ export default function TeachersTab() {
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function SubjectsEditor({ teacher, onChange }: { teacher: Teacher; onChange: (subjects: string[]) => void }) {
+  const [draft, setDraft] = useState('')
+
+  function addSubject() {
+    const value = draft.trim()
+    if (!value) {
+      setDraft('')
+      return
+    }
+    if (!teacher.subjects.some((s) => s.toLowerCase() === value.toLowerCase())) {
+      onChange([...teacher.subjects, value])
+    }
+    setDraft('')
+  }
+
+  function removeSubject(subject: string) {
+    onChange(teacher.subjects.filter((s) => s !== subject))
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      addSubject()
+    } else if (e.key === 'Backspace' && !draft && teacher.subjects.length > 0) {
+      removeSubject(teacher.subjects[teacher.subjects.length - 1])
+    }
+  }
+
+  return (
+    <div className="flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-1">
+      {teacher.subjects.map((s) => (
+        <span
+          key={s}
+          className="inline-flex items-center gap-1 rounded-full bg-[var(--bg)] px-2 py-0.5 text-[var(--fg,inherit)]"
+        >
+          {s}
+          <button
+            type="button"
+            onClick={() => removeSubject(s)}
+            className="text-[var(--muted)] hover:text-[var(--danger)]"
+            aria-label={`Remove ${s}`}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={addSubject}
+        placeholder={teacher.subjects.length ? 'Add…' : 'No subjects set — add one'}
+        className="min-w-[7rem] flex-1 border-none bg-transparent text-xs outline-none placeholder:text-[var(--muted)]"
+      />
     </div>
   )
 }
