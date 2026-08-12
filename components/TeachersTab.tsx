@@ -26,7 +26,12 @@ export default function TeachersTab() {
       supabase.from('sections').select('*'),
       supabase.from('teaching_assignments').select('*'),
     ])
-    setTeachers((t ?? []) as Teacher[])
+    const normalizedTeachers = ((t ?? []) as Teacher[]).map((teacher) => ({
+      ...teacher,
+      subjects: teacher.subjects ?? [],
+      cct_classes: teacher.cct_classes ?? [],
+    }))
+    setTeachers(normalizedTeachers)
     setSections((s ?? []) as Section[])
     setAssignments((a ?? []) as TeachingAssignment[])
   }
