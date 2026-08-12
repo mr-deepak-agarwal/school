@@ -12,6 +12,7 @@ import { DAYS, PERIODS } from '@/lib/periods'
 export default function TimetableTab() {
   const [sections, setSections] = useState<Section[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
+  const [subjects, setSubjects] = useState<string[]>([])
   const [sectionId, setSectionId] = useState<number | null>(null)
   const [slots, setSlots] = useState<TimetableSlot[]>([])
   const [form, setForm] = useState({
@@ -24,13 +25,23 @@ export default function TimetableTab() {
 
   useEffect(() => {
     async function loadStatic() {
-      const [{ data: s }, { data: t }] = await Promise.all([
+      const [{ data: s }, { data: t }, { data: allSlots }] = await Promise.all([
         supabase.from('sections').select('*').order('class').order('section'),
         supabase.from('teachers').select('*').order('name'),
+        supabase.from('timetable').select('subject'),
       ])
       setSections((s ?? []) as Section[])
       setTeachers((t ?? []) as Teacher[])
       if (s && s.length > 0) setSectionId(s[0].id)
+
+      // Subject dropdown options: every subject any teacher can teach,
+      // plus every subject already used anywhere in the timetable (picks
+      // up non-teacher periods like Sports, Library, Self Study, Class
+      // Test, HOA, LA that don't belong to any teacher's subject list).
+      const fromTeachers = ((t ?? []) as Teacher[]).flatMap((teacher) => teacher.subjects ?? [])
+      const fromTimetable = ((allSlots ?? []) as { subject: string }[]).map((row) => row.subject)
+      const all = Array.from(new Set([...fromTeachers, ...fromTimetable])).sort((a, b) => a.localeCompare(b))
+      setSubjects(all)
     }
     loadStatic()
   }, [])
@@ -89,6 +100,14 @@ export default function TimetableTab() {
     loadSlots()
   }
 
+  async function updateSlotSubject(id: number, subject: string) {
+    if (!subject) return
+    setSubjects((prev) => (prev.includes(subject) ? prev : [...prev, subject].sort((a, b) => a.localeCompare(b))))
+    setSlots((prev) => prev.map((s) => (s.id === id ? { ...s, subject } : s)))
+    const { error } = await supabase.from('timetable').update({ subject }).eq('id', id)
+    if (error) loadSlots()
+  }
+
   return (
     <div>
       <div className="mb-4">
@@ -137,12 +156,21 @@ export default function TimetableTab() {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Subject</label>
-          <input
+          <select
             required
             value={form.subject}
             onChange={(e) => setForm({ ...form, subject: e.target.value })}
             className="input"
-          />
+          >
+            <option value="" disabled>
+              Choose a subject…
+            </option>
+            {subjects.map((subj) => (
+              <option key={subj} value={subj}>
+                {subj}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Teacher (optional)</label>
@@ -215,9 +243,20 @@ export default function TimetableTab() {
                     <td key={p.period} className="border-b border-r border-[var(--border-strong)] px-1.5 py-2 align-top last:border-r-0">
                       <div className="flex flex-col items-stretch gap-1">
                         <div className="flex items-start justify-between gap-1">
-                          <span className="truncate text-sm font-medium leading-tight" title={slot.subject}>
-                            {slot.subject}
-                          </span>
+                          <select
+                            value={slot.subject}
+                            onChange={(e) => updateSlotSubject(slot.id, e.target.value)}
+                            className="input w-full px-1 py-0.5 text-xs font-medium"
+                          >
+                            {!subjects.includes(slot.subject) && (
+                              <option value={slot.subject}>{slot.subject}</option>
+                            )}
+                            {subjects.map((subj) => (
+                              <option key={subj} value={subj}>
+                                {subj}
+                              </option>
+                            ))}
+                          </select>
                           <button
                             onClick={() => removeSlot(slot.id)}
                             className="shrink-0 text-xs leading-none text-[var(--danger)]"
