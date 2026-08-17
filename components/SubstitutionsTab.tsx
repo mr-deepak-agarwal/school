@@ -344,6 +344,10 @@ export default function SubstitutionsTab() {
       }
     >()
 
+    // Anyone else marked absent today is off the table too — not just the
+    // one teacher currently selected. A teacher on leave for the whole day
+    // (or a half that covers this period) can't be free to substitute
+    // just because their own timetable happens to have no class then.
     for (const slot of slotsToCover) {
       const slotPeriod = Number(slot.period)
       const busyIds = new Set<string>()
@@ -353,6 +357,10 @@ export default function SubstitutionsTab() {
       for (const [timetableId, sub] of Object.entries(existingSubs)) {
         const row = dayTimetable.find((r) => r.id === Number(timetableId))
         if (row && Number(row.period) === slotPeriod) busyIds.add(String(sub.substitute_teacher_id))
+      }
+      for (const leave of leaveToday) {
+        if (leave.teacher_id === absentTeacherId) continue // already excluded separately below
+        if (periodsForHalf(leave.half).includes(slotPeriod)) busyIds.add(leave.teacher_id)
       }
 
       const eligible = teachers.filter((t) => t.id !== absentTeacherId && !busyIds.has(String(t.id)))
@@ -428,7 +436,7 @@ export default function SubstitutionsTab() {
     }
 
     return map
-  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferredRows, fullTimetable, absentTeacherId, extraSubPeriodsByTeacher])
+  }, [slotsToCover, teachers, dayTimetable, existingSubs, preferredRows, fullTimetable, absentTeacherId, extraSubPeriodsByTeacher, leaveToday])
 
   // Pre-fill the dropdown with the top suggestion so admin usually just hits Assign.
   useEffect(() => {
