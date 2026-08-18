@@ -330,6 +330,18 @@ export default function SubstitutionsTab() {
     return map
   }, [existingSubs, dayTimetable])
 
+  // How many periods each teacher already has today — same for every slot
+  // being filled, so this lives outside the per-slot candidatesBySlot loop
+  // rather than being recomputed for each one. Shown next to their name in
+  // the substitute picker so the admin can favor someone lighter-loaded.
+  const periodsTodayById = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const t of teachers) {
+      m.set(t.id, occupiedPeriods(t.id, dayTimetable, extraSubPeriodsByTeacher.get(t.id) ?? []).length)
+    }
+    return m
+  }, [teachers, dayTimetable, extraSubPeriodsByTeacher])
+
   const candidatesBySlot = useMemo(() => {
     const map = new Map<
       number,
@@ -836,7 +848,7 @@ export default function SubstitutionsTab() {
                           <optgroup label="✓ Marked preferred for this section">
                             {entry.preferredSection.map((t) => (
                               <option key={t.id} value={t.id}>
-                                {t.name}
+                                {t.name} · {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                               </option>
                             ))}
@@ -846,7 +858,7 @@ export default function SubstitutionsTab() {
                           <optgroup label="Teaches this subject to this section">
                             {entry.sameSubject.map((t) => (
                               <option key={t.id} value={t.id}>
-                                {t.name}
+                                {t.name} · {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                               </option>
                             ))}
@@ -857,7 +869,8 @@ export default function SubstitutionsTab() {
                             {entry.sameSection.map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}
-                                {t.subjects && t.subjects.length > 0 ? ` (${t.subjects.join(', ')})` : ''}
+                                {t.subjects && t.subjects.length > 0 ? ` (${t.subjects.join(', ')})` : ''} ·{' '}
+                                {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                               </option>
                             ))}
@@ -872,7 +885,8 @@ export default function SubstitutionsTab() {
                                   ? ` (teaches ${slot.subject} elsewhere)`
                                   : t.subjects && t.subjects.length > 0
                                   ? ` (${t.subjects.join(', ')})`
-                                  : ''}
+                                  : ''}{' '}
+                                · {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
                               </option>
                             ))}
