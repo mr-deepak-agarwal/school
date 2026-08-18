@@ -334,6 +334,24 @@ export default function SubstitutionsTab() {
   // being filled, so this lives outside the per-slot candidatesBySlot loop
   // rather than being recomputed for each one. Shown next to their name in
   // the substitute picker so the admin can favor someone lighter-loaded.
+  // How many periods a given teacher is already substituting for TODAY in
+  // a given section — flagged in the picker so the admin can see at a
+  // glance if someone's about to cover a 3rd period for the same class
+  // (as opposed to being spread across different classes, which is fine).
+  const subsInSectionCount = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const s of daySubs) {
+      const key = `${s.substitute_teacher_id}:${s.section_id}`
+      m.set(key, (m.get(key) ?? 0) + 1)
+    }
+    return m
+  }, [daySubs])
+
+  function repeatSectionLabel(teacherId: string, sectionId: number): string {
+    const n = subsInSectionCount.get(`${teacherId}:${sectionId}`) ?? 0
+    return n >= 2 ? ` — ${n} periods already taken in this class` : ''
+  }
+
   const periodsTodayById = useMemo(() => {
     const m = new Map<string, number>()
     for (const t of teachers) {
@@ -850,6 +868,7 @@ export default function SubstitutionsTab() {
                               <option key={t.id} value={t.id}>
                                 {t.name} · {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                                {repeatSectionLabel(t.id, slot.section_id)}
                               </option>
                             ))}
                           </optgroup>
@@ -860,6 +879,7 @@ export default function SubstitutionsTab() {
                               <option key={t.id} value={t.id}>
                                 {t.name} · {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                                {repeatSectionLabel(t.id, slot.section_id)}
                               </option>
                             ))}
                           </optgroup>
@@ -872,6 +892,7 @@ export default function SubstitutionsTab() {
                                 {t.subjects && t.subjects.length > 0 ? ` (${t.subjects.join(', ')})` : ''} ·{' '}
                                 {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                                {repeatSectionLabel(t.id, slot.section_id)}
                               </option>
                             ))}
                           </optgroup>
@@ -888,6 +909,7 @@ export default function SubstitutionsTab() {
                                   : ''}{' '}
                                 · {periodsTodayById.get(t.id) ?? 0} today
                                 {entry.overCapacityIds.has(t.id) ? ` (over workload limit)` : ''}
+                                {repeatSectionLabel(t.id, slot.section_id)}
                               </option>
                             ))}
                           </optgroup>
