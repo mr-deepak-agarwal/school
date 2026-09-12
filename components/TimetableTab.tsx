@@ -23,6 +23,17 @@ export default function TimetableTab() {
   })
   const [error, setError] = useState('')
 
+  // 'week' is the original full-grid builder — good on a wide screen for
+  // adding periods anywhere at once. 'day' shows one weekday as a stacked,
+  // fill-in-the-blank list of periods — the friendlier way to build a
+  // section's timetable from scratch on a phone, one period at a time,
+  // the way the paper timetables in the photos actually get filled in.
+  const [viewMode, setViewMode] = useState<'week' | 'day'>('week')
+  const [activeDay, setActiveDay] = useState(DAYS[0])
+  const [addingPeriod, setAddingPeriod] = useState<number | null>(null)
+  const [dayForm, setDayForm] = useState({ subject: '', teacher_id: '' })
+  const [dayError, setDayError] = useState('')
+
   useEffect(() => {
     async function loadStatic() {
       const [{ data: s }, { data: t }, { data: allSlots }] = await Promise.all([
@@ -87,6 +98,35 @@ export default function TimetableTab() {
     loadSlots()
   }
 
+  // Same insert as addSlot, but driven by the day view's inline per-period
+  // "+" rather than the week view's top form — day/period come from which
+  // row was tapped instead of select inputs.
+  async function addSlotForDay(period: number) {
+    setDayError('')
+    if (!sectionId || !dayForm.subject) return
+
+    const periodInfo = PERIODS.find((p) => p.period === period)
+
+    const { error } = await supabase.from('timetable').insert({
+      day: activeDay,
+      period,
+      subject: dayForm.subject,
+      teacher_id: dayForm.teacher_id || null,
+      section_id: sectionId,
+      start_time: periodInfo?.start ?? null,
+      end_time: periodInfo?.end ?? null,
+    })
+
+    if (error) {
+      setDayError(error.message)
+      return
+    }
+
+    setDayForm({ subject: '', teacher_id: '' })
+    setAddingPeriod(null)
+    loadSlots()
+  }
+
   async function removeSlot(id: number) {
     await supabase.from('timetable').delete().eq('id', id)
     loadSlots()
@@ -110,18 +150,183 @@ export default function TimetableTab() {
 
   return (
     <div>
-      <div className="mb-4">
-        <label className="mb-1 block text-sm font-medium">Section</label>
-        <select value={sectionId ?? ''} onChange={(e) => setSectionId(Number(e.target.value))} className="input max-w-xs">
-          {sections.map((s) => (
-            <option key={s.id} value={s.id}>
-              Class {s.class}
-              {s.section}
-            </option>
-          ))}
-        </select>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <label className="mb-1 block text-sm font-medium">Section</label>
+          <select value={sectionId ?? ''} onChange={(e) => setSectionId(Number(e.target.value))} className="input max-w-xs">
+            {sections.map((s) => (
+              <option key={s.id} value={s.id}>
+                Class {s.class}
+                {s.section}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode('week')}
+            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+              viewMode === 'week' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+            }`}
+          >
+            Week grid
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('day')}
+            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+              viewMode === 'day' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+            }`}
+          >
+            Day by day
+          </button>
+        </div>
       </div>
 
+      {viewMode === 'day' && (
+        <div className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1">
+          {DAYS.map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => {
+                setActiveDay(d)
+                setAddingPeriod(null)
+              }}
+              className={`flex-1 whitespace-nowrap rounded-md px-2 py-1.5 text-xs font-semibold transition-all ${
+                activeDay === d ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)] hover:bg-[var(--surface-sunken)]'
+              }`}
+            >
+              {d.slice(0, 3)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {viewMode === 'day' ? (
+        <div className="space-y-2">
+          {dayError && <p className="text-sm text-[var(--danger)]">{dayError}</p>}
+          {PERIODS.map((p) => {
+            const slot = slots.find((s) => s.day === activeDay && s.period === p.period)
+
+            return (
+              <div key={p.period} className="card !py-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-16 shrink-0 text-center">
+                    <div className="text-sm font-bold">P{p.period}</div>
+                    <div className="text-[10px] text-[var(--muted)]">
+                      {p.start}–{p.end}
+                    </div>
+                  </div>
+                  <div className="h-8 w-px shrink-0 bg-[var(--border)]" />
+
+                  {slot ? (
+                    <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:items-center">
+                      <select
+                        value={slot.subject}
+                        onChange={(e) => updateSlotSubject(slot.id, e.target.value)}
+                        className="input flex-1 py-1.5 text-sm font-medium"
+                      >
+                        {!subjects.includes(slot.subject) && <option value={slot.subject}>{slot.subject}</option>}
+                        {subjects.map((subj) => (
+                          <option key={subj} value={subj}>
+                            {subj}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={slot.teacher_id ?? ''}
+                        onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
+                        className="input flex-1 py-1.5 text-sm"
+                      >
+                        <option value="">Unassigned</option>
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => removeSlot(slot.id)}
+                        className="btn-ghost btn-sm shrink-0 !text-[var(--danger)]"
+                        title="Remove period"
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : addingPeriod === p.period ? (
+                    <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:items-center">
+                      <select
+                        autoFocus
+                        value={dayForm.subject}
+                        onChange={(e) => setDayForm({ ...dayForm, subject: e.target.value })}
+                        className="input flex-1 py-1.5 text-sm font-medium"
+                      >
+                        <option value="" disabled>
+                          Choose a subject…
+                        </option>
+                        {subjects.map((subj) => (
+                          <option key={subj} value={subj}>
+                            {subj}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={dayForm.teacher_id}
+                        onChange={(e) => setDayForm({ ...dayForm, teacher_id: e.target.value })}
+                        className="input flex-1 py-1.5 text-sm"
+                      >
+                        <option value="">Unassigned — allocate later</option>
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          onClick={() => addSlotForDay(p.period)}
+                          disabled={!dayForm.subject}
+                          className="btn-primary btn-sm"
+                          type="button"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAddingPeriod(null)
+                            setDayError('')
+                          }}
+                          className="btn-secondary btn-sm"
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setAddingPeriod(p.period)
+                        setDayForm({ subject: '', teacher_id: '' })
+                        setDayError('')
+                      }}
+                      className="btn-secondary btn-sm"
+                      type="button"
+                    >
+                      + Add period
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+      <>
       <form
         onSubmit={addSlot}
         className="mb-6 grid grid-cols-2 gap-3 card sm:grid-cols-3"
@@ -288,6 +493,8 @@ export default function TimetableTab() {
       </div>
       {slots.length === 0 && (
         <p className="mt-3 text-sm text-[var(--muted)]">No periods added for this section yet.</p>
+      )}
+      </>
       )}
     </div>
   )

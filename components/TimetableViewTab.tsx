@@ -12,6 +12,15 @@ export default function TimetableViewTab() {
   // single date to land on — a single-day picker never matched what was
   // actually on screen.
   const [weekStart, setWeekStart] = useState(mondayOfWeek(todayISO()))
+  // 'week' shows the full Mon–Fri grid (best on a wide screen); 'day'
+  // shows one day as a stacked list of periods — the more usable option
+  // on a phone, where a 10-column table forces constant horizontal
+  // scrolling just to read one class's subject.
+  const [viewMode, setViewMode] = useState<'week' | 'day'>('week')
+  const [dayIndex, setDayIndex] = useState(() => {
+    const jsDay = new Date().getDay() // 0 Sun .. 6 Sat
+    return jsDay >= 1 && jsDay <= 5 ? jsDay - 1 : 0
+  })
   const [sections, setSections] = useState<Section[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [teacherId, setTeacherId] = useState('')
@@ -32,6 +41,22 @@ export default function TimetableViewTab() {
 
   const today = todayISO()
   const dates = useMemo(() => weekDates(weekStart), [weekStart])
+
+  // Steps the day view forward/back by one weekday, rolling into the
+  // adjacent week (and re-syncing weekStart, which everything else keys
+  // off) when stepping past Monday or Friday.
+  function stepDay(delta: 1 | -1) {
+    const next = dayIndex + delta
+    if (next < 0) {
+      setWeekStart((w) => addDays(w, -7))
+      setDayIndex(4)
+    } else if (next > 4) {
+      setWeekStart((w) => addDays(w, 7))
+      setDayIndex(0)
+    } else {
+      setDayIndex(next)
+    }
+  }
 
   useEffect(() => {
     async function loadStatic() {
@@ -61,6 +86,55 @@ export default function TimetableViewTab() {
 
   // Selecting a teacher takes precedence; otherwise fall back to class+section.
   const mode: 'teacher' | 'section' | 'none' = teacherId ? 'teacher' : sectionId ? 'section' : 'none'
+
+  // One place that figures out what a given (day, period) cell should show
+  // — a substitute-coverage period, an empty slot, or a real one with its
+  // sub/swap indicators — reused by both the week table's <td> and the
+  // day view's stacked cards so the two never drift out of sync.
+  type CellInfo =
+    | { kind: 'covering'; subject: string; sectionLabel: string; coveringFor: string }
+    | { kind: 'empty' }
+    | {
+        kind: 'slot'
+        subject: string
+        secondaryLabel: string
+        subLabel?: string
+        swapLabel?: string
+      }
+
+  function cellInfo(day: string, rowDate: string, period: number): CellInfo {
+    const rowSwaps = swapsByDate[rowDate] ?? []
+    const rowCovering = coveringByDate[rowDate] ?? []
+    const covering = mode === 'teacher' ? rowCovering.find((c) => c.period === period) : undefined
+
+    if (covering) {
+      return {
+        kind: 'covering',
+        subject: covering.subject,
+        sectionLabel: sectionMap[covering.section_id] ?? '',
+        coveringFor: teacherMap[covering.original_teacher_id] ?? '?',
+      }
+    }
+
+    const slot = slots.find((s) => s.day === day && s.period === period)
+    if (!slot) return { kind: 'empty' }
+
+    const subId = subsByKey[`${rowDate}|${slot.id}`]
+    const swap = slot.teacher_id ? swapFor(rowSwaps, slot.teacher_id, Number(slot.period)) : undefined
+
+    return {
+      kind: 'slot',
+      subject: slot.subject,
+      secondaryLabel:
+        mode === 'teacher'
+          ? `Class ${sectionMap[slot.section_id] ?? ''}`
+          : slot.teacher_id
+            ? teacherMap[slot.teacher_id]
+            : 'Unassigned',
+      subLabel: subId ? `Sub: ${teacherMap[subId] ?? '?'}` : undefined,
+      swapLabel: swap ? `Swap: ${teacherMap[swapPartner(swap, slot.teacher_id!).partnerId] ?? '?'}` : undefined,
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -241,11 +315,53 @@ export default function TimetableViewTab() {
         </div>
       </div>
 
-      {teacherId && (
-        <p className="mb-4 text-sm text-[var(--muted)]">
-          Showing <span className="font-medium text-[var(--text)]">{teacherMap[teacherId]}</span>&rsquo;s timetable
-          across all classes.
-        </p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {teacherId ? (
+          <p className="text-sm text-[var(--muted)]">
+            Showing <span className="font-medium text-[var(--text)]">{teacherMap[teacherId]}</span>&rsquo;s timetable
+            across all classes.
+          </p>
+        ) : (
+          <span />
+        )}
+
+        {mode !== 'none' && (
+          <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode('week')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+                viewMode === 'week' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+              }`}
+            >
+              Week
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('day')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+                viewMode === 'day' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+              }`}
+            >
+              Day
+            </button>
+          </div>
+        )}
+      </div>
+
+      {mode !== 'none' && viewMode === 'day' && (
+        <div className="mb-4 flex items-center justify-center gap-3">
+          <button onClick={() => stepDay(-1)} className="btn-secondary btn-sm px-2" aria-label="Previous day" type="button">
+            ‹
+          </button>
+          <span className="min-w-[160px] text-center text-sm font-semibold">
+            {DAYS[dayIndex]}
+            <span className="ml-1.5 font-normal text-[var(--muted)]">{dates[dayIndex]}</span>
+          </span>
+          <button onClick={() => stepDay(1)} className="btn-secondary btn-sm px-2" aria-label="Next day" type="button">
+            ›
+          </button>
+        </div>
       )}
 
       {mode === 'none' ? (
@@ -254,6 +370,48 @@ export default function TimetableViewTab() {
         <p className="text-sm text-[var(--muted)]">Loading…</p>
       ) : slots.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No periods found for this selection.</p>
+      ) : viewMode === 'day' ? (
+        <div className="space-y-2">
+          {PERIODS.map((p) => {
+            const info = cellInfo(DAYS[dayIndex], dates[dayIndex], p.period)
+            return (
+              <div
+                key={p.period}
+                className={`card flex items-center gap-3 !py-3 ${info.kind === 'covering' ? 'bg-[var(--primary-tint)]' : ''}`}
+              >
+                <div className="w-16 shrink-0 text-center">
+                  <div className="text-sm font-bold">P{p.period}</div>
+                  <div className="text-[10px] text-[var(--muted)]">
+                    {p.start}–{p.end}
+                  </div>
+                </div>
+                <div className="h-8 w-px shrink-0 bg-[var(--border)]" />
+                {info.kind === 'empty' ? (
+                  <div className="text-sm text-[var(--muted)]">Free</div>
+                ) : info.kind === 'covering' ? (
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">{info.subject}</div>
+                    <div className="truncate text-xs text-[var(--muted)]">Class {info.sectionLabel}</div>
+                    <div className="truncate text-xs font-medium text-[var(--primary)]">
+                      Covering for {info.coveringFor}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">{info.subject}</div>
+                    <div className="truncate text-xs text-[var(--muted)]">{info.secondaryLabel}</div>
+                    {info.subLabel && (
+                      <div className="truncate text-xs font-medium text-[var(--danger)]">{info.subLabel}</div>
+                    )}
+                    {info.swapLabel && (
+                      <div className="truncate text-xs font-medium text-[var(--warn)]">{info.swapLabel}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       ) : (
       <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
         <table className="w-full table-fixed border-collapse text-sm">
@@ -282,11 +440,9 @@ export default function TimetableViewTab() {
             </tr>
           </thead>
           <tbody>
-            {DAYS.map((day, dayIndex) => {
-              const rowDate = dates[dayIndex]
+            {DAYS.map((day, rowDayIndex) => {
+              const rowDate = dates[rowDayIndex]
               const isToday = rowDate === today
-              const rowSwaps = swapsByDate[rowDate] ?? []
-              const rowCovering = coveringByDate[rowDate] ?? []
 
               return (
                 <tr key={day} className={isToday ? 'bg-[var(--primary)]/5' : undefined}>
@@ -297,29 +453,28 @@ export default function TimetableViewTab() {
                     </div>
                   </td>
                   {PERIODS.map((p) => {
-                    const covering = mode === 'teacher' ? rowCovering.find((c) => c.period === p.period) : undefined
+                    const info = cellInfo(day, rowDate, p.period)
 
-                    if (covering) {
+                    if (info.kind === 'covering') {
                       return (
                         <td
                           key={p.period}
                           className="border-b border-[var(--border)] bg-[var(--primary-tint)] px-1.5 py-2 align-top"
                         >
-                          <div className="truncate text-xs font-medium leading-tight" title={covering.subject}>
-                            {covering.subject}
+                          <div className="truncate text-xs font-medium leading-tight" title={info.subject}>
+                            {info.subject}
                           </div>
                           <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
-                            Class {sectionMap[covering.section_id] ?? ''}
+                            Class {info.sectionLabel}
                           </div>
                           <div className="mt-1 truncate text-[10px] font-medium text-[var(--primary)]">
-                            Covering for {teacherMap[covering.original_teacher_id] ?? '?'}
+                            Covering for {info.coveringFor}
                           </div>
                         </td>
                       )
                     }
 
-                    const slot = slots.find((s) => s.day === day && s.period === p.period)
-                    if (!slot) {
+                    if (info.kind === 'empty') {
                       return (
                         <td
                           key={p.period}
@@ -330,29 +485,20 @@ export default function TimetableViewTab() {
                       )
                     }
 
-                    const subId = subsByKey[`${rowDate}|${slot.id}`]
-                    const swap = slot.teacher_id ? swapFor(rowSwaps, slot.teacher_id, Number(slot.period)) : undefined
-
                     return (
                       <td key={p.period} className="border-b border-[var(--border)] px-1.5 py-2 align-top">
-                        <div className="truncate text-xs font-medium leading-tight" title={slot.subject}>
-                          {slot.subject}
+                        <div className="truncate text-xs font-medium leading-tight" title={info.subject}>
+                          {info.subject}
                         </div>
-                        <div className="mt-1 truncate text-[10px] text-[var(--muted)]">
-                          {mode === 'teacher'
-                            ? `Class ${sectionMap[slot.section_id] ?? ''}`
-                            : slot.teacher_id
-                              ? teacherMap[slot.teacher_id]
-                              : 'Unassigned'}
-                        </div>
-                        {subId && (
+                        <div className="mt-1 truncate text-[10px] text-[var(--muted)]">{info.secondaryLabel}</div>
+                        {info.subLabel && (
                           <div className="mt-1 truncate text-[10px] font-medium text-[var(--danger)]">
-                            Sub: {teacherMap[subId] ?? '?'}
+                            {info.subLabel}
                           </div>
                         )}
-                        {swap && (
+                        {info.swapLabel && (
                           <div className="mt-1 truncate text-[10px] font-medium text-[var(--warn)]">
-                            Swap: {teacherMap[swapPartner(swap, slot.teacher_id!).partnerId] ?? '?'}
+                            {info.swapLabel}
                           </div>
                         )}
                       </td>
