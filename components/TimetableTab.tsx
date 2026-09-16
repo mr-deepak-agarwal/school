@@ -384,11 +384,18 @@ export default function TimetableTab() {
     )
   }
 
-  // Whether a teacher has a teaching assignment for this grade (class
-  // number) in *any* section — e.g. a teacher assigned to 6B counts as
-  // teaching grade 6, so they're offered for 6A too.
+  // Whether a teacher teaches this grade (class number) anywhere — from
+  // *either* an explicit "Teaches: subject · section" chip on the Teachers
+  // tab, or (more reliably, since that chip is optional and often never
+  // filled in) an actual period they already hold with some section of
+  // that grade, anywhere in the week. The timetable itself is the ground
+  // truth for who teaches what; the assignments table is only a
+  // supplementary signal for a class they haven't been timetabled for yet.
   function teacherTeachesGrade(teacherId: string, grade: number): boolean {
-    return assignments.some((a) => a.teacher_id === teacherId && sections.find((s) => s.id === a.section_id)?.class === grade)
+    const classOf = (sectionIdVal: number) => sections.find((s) => s.id === sectionIdVal)?.class
+    const fromAssignments = assignments.some((a) => a.teacher_id === teacherId && classOf(a.section_id) === grade)
+    if (fromAssignments) return true
+    return allBookings.some((b) => b.teacher_id === teacherId && classOf(b.section_id) === grade)
   }
 
   // In section mode, once a subject is picked, only offer teachers who:
@@ -396,8 +403,9 @@ export default function TimetableTab() {
   // (3) are free at this day/period (not already booked with another
   // class then). Each filter falls back to the wider list if it would
   // otherwise leave nobody to pick — e.g. no one is tagged for a
-  // non-teacher period like Sports, or grade assignments simply haven't
-  // been filled in yet — so the dropdown is never left empty because of a
+  // non-teacher period like Sports, or nobody has been timetabled or
+  // assigned to this grade at all yet (a brand-new grade's very first
+  // period) — so the dropdown is never left empty because of a
   // data-quality gap rather than a real clash. Availability is the one
   // hard constraint that never falls back: a double-booking is a real
   // problem, not a data gap. Whoever is currently assigned always stays
