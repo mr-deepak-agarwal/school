@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import type { Section, Teacher, TimetableSlot } from '@/lib/types'
+import type { Section, Teacher, TeachingAssignment, TimetableSlot } from '@/lib/types'
 import { teacherTeachesSubject } from '@/lib/subjectMatch'
 // DAYS and PERIODS live in one place (lib/periods.ts) — this used to keep a
 // second, hand-copied set of period times here, which meant a schedule
@@ -25,6 +25,16 @@ export default function TimetableTab() {
   const [sections, setSections] = useState<Section[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [subjects, setSubjects] = useState<string[]>([])
+  const [assignments, setAssignments] = useState<TeachingAssignment[]>([])
+
+  // Whole-school view of who's already booked where, kept separate from
+  // `slots` (which only ever holds the current section's or teacher's own
+  // rows). Needed so the teacher picker can tell a period is free without
+  // querying the database on every keystroke — refreshed alongside `slots`
+  // so it never goes stale after an add/edit/remove.
+  const [allBookings, setAllBookings] = useState<
+    { day: string; period: number; teacher_id: string | null; section_id: number }[]
+  >([])
 
   const [buildBy, setBuildBy] = useState<BuildBy>('section')
   const [sectionId, setSectionId] = useState<number | null>(null)
@@ -61,13 +71,15 @@ export default function TimetableTab() {
 
   useEffect(() => {
     async function loadStatic() {
-      const [{ data: s }, { data: t }, { data: allSlots }] = await Promise.all([
+      const [{ data: s }, { data: t }, { data: allSlots }, { data: a }] = await Promise.all([
         supabase.from('sections').select('*').order('class').order('section'),
         supabase.from('teachers').select('*').order('name'),
         supabase.from('timetable').select('subject'),
+        supabase.from('teaching_assignments').select('*'),
       ])
       setSections((s ?? []) as Section[])
       setTeachers((t ?? []) as Teacher[])
+      setAssignments((a ?? []) as TeachingAssignment[])
       if (s && s.length > 0) setSectionId(s[0].id)
       if (t && t.length > 0) setTeacherId(t[0].id)
 
@@ -103,6 +115,18 @@ export default function TimetableTab() {
         .order('period')
       setSlots((data ?? []) as TimetableSlot[])
     }
+    loadAllBookings()
+  }
+
+  // Whole-school day/period/teacher/section snapshot used to tell which
+  // teachers are free for a given slot. Reloaded whenever `slots` reloads
+  // (i.e. after every add/edit/remove) so a teacher just booked elsewhere
+  // drops out of the picker immediately.
+  async function loadAllBookings() {
+    const { data } = await supabase.from('timetable').select('day, period, teacher_id, section_id')
+    setAllBookings(
+      (data ?? []) as { day: string; period: number; teacher_id: string | null; section_id: number }[]
+    )
   }
 
   useEffect(() => {
@@ -350,17 +374,51 @@ export default function TimetableTab() {
     })
   })()
 
-  // In section mode, once a subject is picked, only offer teachers who
-  // actually teach it — no more hunting through every teacher's name to
-  // find who's marked for Math. Falls back to the full list if nobody's
-  // tagged for that subject (e.g. non-teacher periods like Sports or
-  // Library) so the dropdown is never left empty, and always keeps
-  // whoever's currently assigned visible even if their subjects don't
-  // technically match (so an existing slot never shows a blank select).
-  function teachersForSubject(subject: string, currentTeacherId?: string | null): Teacher[] {
-    if (!subject) return teachers
-    const matches = teachers.filter((t) => teacherTeachesSubject(t, subject) || t.id === currentTeacherId)
-    return matches.length > 0 ? matches : teachers
+  // Whether a teacher is free at this day/period — i.e. not already
+  // booked with some *other* section then. `ownSectionId` is excluded so a
+  // teacher already sitting in this exact section/day/period (the slot
+  // being edited) is never flagged as clashing with themselves.
+  function isTeacherFree(teacherId: string, day: string, period: number, ownSectionId: number | null): boolean {
+    return !allBookings.some(
+      (b) => b.teacher_id === teacherId && b.day === day && b.period === period && b.section_id !== ownSectionId
+    )
+  }
+
+  // Whether a teacher has a teaching assignment for this grade (class
+  // number) in *any* section — e.g. a teacher assigned to 6B counts as
+  // teaching grade 6, so they're offered for 6A too.
+  function teacherTeachesGrade(teacherId: string, grade: number): boolean {
+    return assignments.some((a) => a.teacher_id === teacherId && sections.find((s) => s.id === a.section_id)?.class === grade)
+  }
+
+  // In section mode, once a subject is picked, only offer teachers who:
+  // (1) actually teach that subject, (2) teach this section's grade, and
+  // (3) are free at this day/period (not already booked with another
+  // class then). Each filter falls back to the wider list if it would
+  // otherwise leave nobody to pick — e.g. no one is tagged for a
+  // non-teacher period like Sports, or grade assignments simply haven't
+  // been filled in yet — so the dropdown is never left empty because of a
+  // data-quality gap rather than a real clash. Availability is the one
+  // hard constraint that never falls back: a double-booking is a real
+  // problem, not a data gap. Whoever is currently assigned always stays
+  // visible, even if they no longer match, so an existing slot never
+  // shows a blank select.
+  function teachersForSubject(
+    subject: string,
+    day: string,
+    period: number | null,
+    currentTeacherId?: string | null
+  ): Teacher[] {
+    const bySubject = subject ? teachers.filter((t) => teacherTeachesSubject(t, subject) || t.id === currentTeacherId) : teachers
+    const subjectPool = bySubject.length > 0 ? bySubject : teachers
+
+    const grade = sections.find((s) => s.id === sectionId)?.class
+    const byGrade =
+      grade === undefined ? subjectPool : subjectPool.filter((t) => t.id === currentTeacherId || teacherTeachesGrade(t.id, grade))
+    const gradePool = byGrade.length > 0 ? byGrade : subjectPool
+
+    if (period === null) return gradePool
+    return gradePool.filter((t) => t.id === currentTeacherId || isTeacherFree(t.id, day, period, sectionId))
   }
 
   // Clears a picked teacher when the subject changes to one they don't
@@ -505,7 +563,7 @@ export default function TimetableTab() {
                           className="input flex-1 py-1.5 text-sm"
                         >
                           <option value="">Unassigned</option>
-                          {teachersForSubject(slot.subject, slot.teacher_id).map((t) => (
+                          {teachersForSubject(slot.subject, activeDay, slot.period, slot.teacher_id).map((t) => (
                             <option key={t.id} value={t.id}>
                               {t.name}
                             </option>
@@ -563,7 +621,7 @@ export default function TimetableTab() {
                           className="input flex-1 py-1.5 text-sm"
                         >
                           <option value="">Unassigned — allocate later</option>
-                          {teachersForSubject(dayForm.subject, dayForm.teacher_id).map((t) => (
+                          {teachersForSubject(dayForm.subject, activeDay, p.period, dayForm.teacher_id).map((t) => (
                             <option key={t.id} value={t.id}>
                               {t.name}
                             </option>
@@ -688,7 +746,7 @@ export default function TimetableTab() {
                 className="input"
               >
                 <option value="">Unassigned — allocate later</option>
-                {teachersForSubject(form.subject, form.teacher_id).map((t) => (
+                {teachersForSubject(form.subject, form.day, form.period ? Number(form.period) : null, form.teacher_id).map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
                   </option>
@@ -803,7 +861,7 @@ export default function TimetableTab() {
                               className="input w-full px-1 py-0.5 text-xs"
                             >
                               <option value="">Unassigned</option>
-                              {teachersForSubject(cellForm.subject, cellForm.teacher_id).map((t) => (
+                              {teachersForSubject(cellForm.subject, day, p.period, cellForm.teacher_id).map((t) => (
                                 <option key={t.id} value={t.id}>
                                   {t.name}
                                 </option>
@@ -903,7 +961,7 @@ export default function TimetableTab() {
                             className="input w-full px-1 py-0.5 text-xs"
                           >
                             <option value="">Unassigned</option>
-                            {teachersForSubject(slot.subject, slot.teacher_id).map((t) => (
+                            {teachersForSubject(slot.subject, day, slot.period, slot.teacher_id).map((t) => (
                               <option key={t.id} value={t.id}>
                                 {t.name}
                               </option>
