@@ -9,29 +9,46 @@ import type { Section, Teacher, TimetableSlot } from '@/lib/types'
 // Timetable and Substitutions tabs would quietly disagree with each other.
 import { DAYS, PERIODS } from '@/lib/periods'
 
+// 'section' is the original flow: pick a class/section, fill in its week.
+// 'teacher' builds the same underlying rows the other way round: pick a
+// teacher, then fill in which class they're with each period — handy for
+// setting up someone's schedule directly instead of hunting for them across
+// every section one at a time.
+type BuildBy = 'section' | 'teacher'
+
+function sectionLabel(s: Section) {
+  return `Class ${s.class}${s.section}`
+}
+
 export default function TimetableTab() {
   const [sections, setSections] = useState<Section[]>([])
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [subjects, setSubjects] = useState<string[]>([])
+
+  const [buildBy, setBuildBy] = useState<BuildBy>('section')
   const [sectionId, setSectionId] = useState<number | null>(null)
+  const [teacherId, setTeacherId] = useState<string | null>(null)
+
   const [slots, setSlots] = useState<TimetableSlot[]>([])
   const [form, setForm] = useState({
     day: 'Monday',
     period: '',
     subject: '',
-    teacher_id: '',
+    teacher_id: '', // used when buildBy === 'section'
+    section_id: '', // used when buildBy === 'teacher'
   })
   const [error, setError] = useState('')
 
   // 'week' is the original full-grid builder — good on a wide screen for
   // adding periods anywhere at once. 'day' shows one weekday as a stacked,
   // fill-in-the-blank list of periods — the friendlier way to build a
-  // section's timetable from scratch on a phone, one period at a time,
-  // the way the paper timetables in the photos actually get filled in.
+  // section's (or teacher's) timetable from scratch on a phone, one period
+  // at a time, the way the paper timetables in the photos actually get
+  // filled in.
   const [viewMode, setViewMode] = useState<'week' | 'day'>('week')
   const [activeDay, setActiveDay] = useState(DAYS[0])
   const [addingPeriod, setAddingPeriod] = useState<number | null>(null)
-  const [dayForm, setDayForm] = useState({ subject: '', teacher_id: '' })
+  const [dayForm, setDayForm] = useState({ subject: '', teacher_id: '', section_id: '' })
   const [dayError, setDayError] = useState('')
 
   useEffect(() => {
@@ -44,6 +61,7 @@ export default function TimetableTab() {
       setSections((s ?? []) as Section[])
       setTeachers((t ?? []) as Teacher[])
       if (s && s.length > 0) setSectionId(s[0].id)
+      if (t && t.length > 0) setTeacherId(t[0].id)
 
       // Subject dropdown options: every subject any teacher can teach,
       // plus every subject already used anywhere in the timetable (picks
@@ -58,71 +76,182 @@ export default function TimetableTab() {
   }, [])
 
   async function loadSlots() {
-    if (!sectionId) return
-    const { data } = await supabase
-      .from('timetable')
-      .select('*')
-      .eq('section_id', sectionId)
-      .order('day')
-      .order('period')
-    setSlots((data ?? []) as TimetableSlot[])
+    if (buildBy === 'section') {
+      if (!sectionId) return
+      const { data } = await supabase
+        .from('timetable')
+        .select('*')
+        .eq('section_id', sectionId)
+        .order('day')
+        .order('period')
+      setSlots((data ?? []) as TimetableSlot[])
+    } else {
+      if (!teacherId) return
+      const { data } = await supabase
+        .from('timetable')
+        .select('*')
+        .eq('teacher_id', teacherId)
+        .order('day')
+        .order('period')
+      setSlots((data ?? []) as TimetableSlot[])
+    }
   }
 
   useEffect(() => {
     loadSlots()
-  }, [sectionId])
+    setError('')
+    setDayError('')
+    setAddingPeriod(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildBy, sectionId, teacherId])
+
+  // A teacher can only be in one place each period. This checks the *other*
+  // sections' rows for that day/period — thisSectionId is excluded so
+  // editing/re-saving a teacher's own existing period isn't flagged against
+  // itself.
+  async function checkTeacherConflict(
+    day: string,
+    period: number,
+    thisSectionId: number,
+    teacherIdToCheck: string
+  ): Promise<string | null> {
+    const { data } = await supabase
+      .from('timetable')
+      .select('id, section_id')
+      .eq('day', day)
+      .eq('period', period)
+      .eq('teacher_id', teacherIdToCheck)
+    const clash = (data ?? []).find((r) => r.section_id !== thisSectionId)
+    if (!clash) return null
+    const sec = sections.find((s) => s.id === clash.section_id)
+    const teacherName = teachers.find((t) => t.id === teacherIdToCheck)?.name ?? 'This teacher'
+    return `${teacherName} already has a period with ${sec ? sectionLabel(sec) : 'another class'} at P${period} on ${day}.`
+  }
+
+  // Whether the section already has a row at this day/period — used when
+  // building by teacher, since picking "Class 6A, period 3, Monday" needs
+  // to know if 6A already has something there before adding a second row
+  // for the same slot.
+  async function checkSectionClash(
+    day: string,
+    period: number,
+    sectionIdToCheck: number
+  ): Promise<{ id: number; teacher_id: string | null; subject: string } | null> {
+    const { data } = await supabase
+      .from('timetable')
+      .select('id, teacher_id, subject')
+      .eq('day', day)
+      .eq('period', period)
+      .eq('section_id', sectionIdToCheck)
+      .maybeSingle()
+    return (data as { id: number; teacher_id: string | null; subject: string } | null) ?? null
+  }
+
+  // Shared insert logic for buildBy === 'section': the section is fixed
+  // (the one currently selected), teacher is optional. Returns an error
+  // message, or null on success.
+  async function addSlotSectionMode(
+    day: string,
+    period: number,
+    subject: string,
+    teacherIdVal: string | null
+  ): Promise<string | null> {
+    if (!sectionId) return 'Pick a section first.'
+    if (teacherIdVal) {
+      const conflict = await checkTeacherConflict(day, period, sectionId, teacherIdVal)
+      if (conflict) return conflict
+    }
+    const periodInfo = PERIODS.find((p) => p.period === period)
+    const { error } = await supabase.from('timetable').insert({
+      day,
+      period,
+      subject,
+      teacher_id: teacherIdVal || null,
+      section_id: sectionId,
+      start_time: periodInfo?.start ?? null,
+      end_time: periodInfo?.end ?? null,
+    })
+    return error ? error.message : null
+  }
+
+  // Shared insert logic for buildBy === 'teacher': the teacher is fixed,
+  // section is required. If the chosen section/day/period already has an
+  // unassigned row there, this claims it (updates it) instead of inserting
+  // a duplicate; if it's already someone else's, it's blocked.
+  async function addSlotTeacherMode(
+    day: string,
+    period: number,
+    subject: string,
+    newSectionId: number
+  ): Promise<string | null> {
+    if (!teacherId) return 'Pick a teacher first.'
+    const teacherConflict = await checkTeacherConflict(day, period, newSectionId, teacherId)
+    if (teacherConflict) return teacherConflict
+
+    const clash = await checkSectionClash(day, period, newSectionId)
+    if (clash) {
+      if (clash.teacher_id && clash.teacher_id !== teacherId) {
+        const otherName = teachers.find((t) => t.id === clash.teacher_id)?.name ?? 'another teacher'
+        return `That class already has ${clash.subject} with ${otherName} at that time.`
+      }
+      const { error } = await supabase.from('timetable').update({ subject, teacher_id: teacherId }).eq('id', clash.id)
+      return error ? error.message : null
+    }
+
+    const periodInfo = PERIODS.find((p) => p.period === period)
+    const { error } = await supabase.from('timetable').insert({
+      day,
+      period,
+      subject,
+      teacher_id: teacherId,
+      section_id: newSectionId,
+      start_time: periodInfo?.start ?? null,
+      end_time: periodInfo?.end ?? null,
+    })
+    return error ? error.message : null
+  }
 
   async function addSlot(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!sectionId || !form.period || !form.subject) return
+    if (!form.period || !form.subject) return
 
-    const periodInfo = PERIODS.find((p) => p.period === Number(form.period))
+    const msg =
+      buildBy === 'section'
+        ? await addSlotSectionMode(form.day, Number(form.period), form.subject, form.teacher_id || null)
+        : form.section_id
+          ? await addSlotTeacherMode(form.day, Number(form.period), form.subject, Number(form.section_id))
+          : 'Pick a class/section for this period.'
 
-    const { error } = await supabase.from('timetable').insert({
-      day: form.day,
-      period: Number(form.period),
-      subject: form.subject,
-      teacher_id: form.teacher_id || null,
-      section_id: sectionId,
-      start_time: periodInfo?.start ?? null,
-      end_time: periodInfo?.end ?? null,
-    })
-
-    if (error) {
-      setError(error.message)
+    if (msg) {
+      setError(msg)
       return
     }
 
-    setForm({ day: form.day, period: '', subject: '', teacher_id: '' })
+    setForm({ day: form.day, period: '', subject: '', teacher_id: '', section_id: '' })
     loadSlots()
   }
 
-  // Same insert as addSlot, but driven by the day view's inline per-period
+  // Same inserts as addSlot, but driven by the day view's inline per-period
   // "+" rather than the week view's top form — day/period come from which
   // row was tapped instead of select inputs.
   async function addSlotForDay(period: number) {
     setDayError('')
-    if (!sectionId || !dayForm.subject) return
+    if (!dayForm.subject) return
 
-    const periodInfo = PERIODS.find((p) => p.period === period)
+    const msg =
+      buildBy === 'section'
+        ? await addSlotSectionMode(activeDay, period, dayForm.subject, dayForm.teacher_id || null)
+        : dayForm.section_id
+          ? await addSlotTeacherMode(activeDay, period, dayForm.subject, Number(dayForm.section_id))
+          : 'Pick a class/section for this period.'
 
-    const { error } = await supabase.from('timetable').insert({
-      day: activeDay,
-      period,
-      subject: dayForm.subject,
-      teacher_id: dayForm.teacher_id || null,
-      section_id: sectionId,
-      start_time: periodInfo?.start ?? null,
-      end_time: periodInfo?.end ?? null,
-    })
-
-    if (error) {
-      setDayError(error.message)
+    if (msg) {
+      setDayError(msg)
       return
     }
 
-    setDayForm({ subject: '', teacher_id: '' })
+    setDayForm({ subject: '', teacher_id: '', section_id: '' })
     setAddingPeriod(null)
     loadSlots()
   }
@@ -132,11 +261,39 @@ export default function TimetableTab() {
     loadSlots()
   }
 
-  async function updateSlotTeacher(id: number, teacherId: string) {
-    await supabase
-      .from('timetable')
-      .update({ teacher_id: teacherId || null })
-      .eq('id', id)
+  async function updateSlotTeacher(id: number, newTeacherId: string) {
+    const slot = slots.find((s) => s.id === id)
+    if (!slot) return
+    if (newTeacherId) {
+      const conflict = await checkTeacherConflict(slot.day, slot.period, slot.section_id, newTeacherId)
+      if (conflict) {
+        setError(conflict)
+        return
+      }
+    }
+    setError('')
+    await supabase.from('timetable').update({ teacher_id: newTeacherId || null }).eq('id', id)
+    loadSlots()
+  }
+
+  // Teacher-mode equivalent of updateSlotTeacher: this teacher's period
+  // stays fixed, but which class it's with can change.
+  async function updateSlotSection(id: number, newSectionId: number) {
+    const slot = slots.find((s) => s.id === id)
+    if (!slot) return
+    const clash = await checkSectionClash(slot.day, slot.period, newSectionId)
+    if (clash && clash.id !== id) {
+      const otherName = clash.teacher_id ? teachers.find((t) => t.id === clash.teacher_id)?.name : null
+      const clashedSection = sections.find((s) => s.id === newSectionId)
+      setError(
+        `${clashedSection ? sectionLabel(clashedSection) : 'That class'} already has ${clash.subject}${
+          otherName ? ` with ${otherName}` : ''
+        } at that time — remove that period first.`
+      )
+      return
+    }
+    setError('')
+    await supabase.from('timetable').update({ section_id: newSectionId }).eq('id', id)
     loadSlots()
   }
 
@@ -148,40 +305,91 @@ export default function TimetableTab() {
     if (error) loadSlots()
   }
 
+  // In teacher mode, put that teacher's own subjects at the top of every
+  // subject dropdown — still lets them be given anything else, just saves
+  // scrolling for the common case.
+  const orderedSubjects = (() => {
+    if (buildBy !== 'teacher' || !teacherId) return subjects
+    const own = teachers.find((t) => t.id === teacherId)?.subjects ?? []
+    return [...subjects].sort((a, b) => {
+      const aOwn = own.includes(a) ? 0 : 1
+      const bOwn = own.includes(b) ? 0 : 1
+      return aOwn !== bOwn ? aOwn - bOwn : a.localeCompare(b)
+    })
+  })()
+
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <label className="mb-1 block text-sm font-medium">Section</label>
-          <select value={sectionId ?? ''} onChange={(e) => setSectionId(Number(e.target.value))} className="input max-w-xs">
-            {sections.map((s) => (
-              <option key={s.id} value={s.id}>
-                Class {s.class}
-                {s.section}
-              </option>
-            ))}
-          </select>
+      <div className="mb-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">Build by</span>
+          <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
+            <button
+              type="button"
+              onClick={() => setBuildBy('section')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+                buildBy === 'section' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+              }`}
+            >
+              Class / section
+            </button>
+            <button
+              type="button"
+              onClick={() => setBuildBy('teacher')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+                buildBy === 'teacher' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+              }`}
+            >
+              Teacher
+            </button>
+          </div>
         </div>
 
-        <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
-          <button
-            type="button"
-            onClick={() => setViewMode('week')}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
-              viewMode === 'week' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
-            }`}
-          >
-            Week grid
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('day')}
-            className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
-              viewMode === 'day' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
-            }`}
-          >
-            Day by day
-          </button>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          {buildBy === 'section' ? (
+            <div>
+              <label className="mb-1 block text-sm font-medium">Section</label>
+              <select value={sectionId ?? ''} onChange={(e) => setSectionId(Number(e.target.value))} className="input max-w-xs">
+                {sections.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {sectionLabel(s)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-sm font-medium">Teacher</label>
+              <select value={teacherId ?? ''} onChange={(e) => setTeacherId(e.target.value)} className="input max-w-xs">
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode('week')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+                viewMode === 'week' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+              }`}
+            >
+              Week grid
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('day')}
+              className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+                viewMode === 'day' ? 'bg-[var(--primary)] text-white' : 'text-[var(--muted)]'
+              }`}
+            >
+              Day by day
+            </button>
+          </div>
         </div>
       </div>
 
@@ -207,6 +415,7 @@ export default function TimetableTab() {
 
       {viewMode === 'day' ? (
         <div className="space-y-2">
+          {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
           {dayError && <p className="text-sm text-[var(--danger)]">{dayError}</p>}
           {PERIODS.map((p) => {
             const slot = slots.find((s) => s.day === activeDay && s.period === p.period)
@@ -230,24 +439,38 @@ export default function TimetableTab() {
                         className="input flex-1 py-1.5 text-sm font-medium"
                       >
                         {!subjects.includes(slot.subject) && <option value={slot.subject}>{slot.subject}</option>}
-                        {subjects.map((subj) => (
+                        {orderedSubjects.map((subj) => (
                           <option key={subj} value={subj}>
                             {subj}
                           </option>
                         ))}
                       </select>
-                      <select
-                        value={slot.teacher_id ?? ''}
-                        onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
-                        className="input flex-1 py-1.5 text-sm"
-                      >
-                        <option value="">Unassigned</option>
-                        {teachers.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
+                      {buildBy === 'section' ? (
+                        <select
+                          value={slot.teacher_id ?? ''}
+                          onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
+                          className="input flex-1 py-1.5 text-sm"
+                        >
+                          <option value="">Unassigned</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          value={slot.section_id}
+                          onChange={(e) => updateSlotSection(slot.id, Number(e.target.value))}
+                          className="input flex-1 py-1.5 text-sm"
+                        >
+                          {sections.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {sectionLabel(s)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <button
                         onClick={() => removeSlot(slot.id)}
                         className="btn-ghost btn-sm shrink-0 !text-[var(--danger)]"
@@ -268,28 +491,45 @@ export default function TimetableTab() {
                         <option value="" disabled>
                           Choose a subject…
                         </option>
-                        {subjects.map((subj) => (
+                        {orderedSubjects.map((subj) => (
                           <option key={subj} value={subj}>
                             {subj}
                           </option>
                         ))}
                       </select>
-                      <select
-                        value={dayForm.teacher_id}
-                        onChange={(e) => setDayForm({ ...dayForm, teacher_id: e.target.value })}
-                        className="input flex-1 py-1.5 text-sm"
-                      >
-                        <option value="">Unassigned — allocate later</option>
-                        {teachers.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
+                      {buildBy === 'section' ? (
+                        <select
+                          value={dayForm.teacher_id}
+                          onChange={(e) => setDayForm({ ...dayForm, teacher_id: e.target.value })}
+                          className="input flex-1 py-1.5 text-sm"
+                        >
+                          <option value="">Unassigned — allocate later</option>
+                          {teachers.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          value={dayForm.section_id}
+                          onChange={(e) => setDayForm({ ...dayForm, section_id: e.target.value })}
+                          className="input flex-1 py-1.5 text-sm"
+                        >
+                          <option value="" disabled>
+                            Choose a class…
                           </option>
-                        ))}
-                      </select>
+                          {sections.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {sectionLabel(s)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <div className="flex shrink-0 gap-1.5">
                         <button
                           onClick={() => addSlotForDay(p.period)}
-                          disabled={!dayForm.subject}
+                          disabled={!dayForm.subject || (buildBy === 'teacher' && !dayForm.section_id)}
                           className="btn-primary btn-sm"
                           type="button"
                         >
@@ -311,7 +551,7 @@ export default function TimetableTab() {
                     <button
                       onClick={() => {
                         setAddingPeriod(p.period)
-                        setDayForm({ subject: '', teacher_id: '' })
+                        setDayForm({ subject: '', teacher_id: '', section_id: '' })
                         setDayError('')
                       }}
                       className="btn-secondary btn-sm"
@@ -370,7 +610,7 @@ export default function TimetableTab() {
             <option value="" disabled>
               Choose a subject…
             </option>
-            {subjects.map((subj) => (
+            {orderedSubjects.map((subj) => (
               <option key={subj} value={subj}>
                 {subj}
               </option>
@@ -378,19 +618,42 @@ export default function TimetableTab() {
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium">Teacher (optional)</label>
-          <select
-            value={form.teacher_id}
-            onChange={(e) => setForm({ ...form, teacher_id: e.target.value })}
-            className="input"
-          >
-            <option value="">Unassigned — allocate later</option>
-            {teachers.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+          {buildBy === 'section' ? (
+            <>
+              <label className="mb-1 block text-sm font-medium">Teacher (optional)</label>
+              <select
+                value={form.teacher_id}
+                onChange={(e) => setForm({ ...form, teacher_id: e.target.value })}
+                className="input"
+              >
+                <option value="">Unassigned — allocate later</option>
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <>
+              <label className="mb-1 block text-sm font-medium">Class / section</label>
+              <select
+                required
+                value={form.section_id}
+                onChange={(e) => setForm({ ...form, section_id: e.target.value })}
+                className="input"
+              >
+                <option value="" disabled>
+                  Choose a class…
+                </option>
+                {sections.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {sectionLabel(s)}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
         <div className="col-span-2 sm:col-span-3">
           {error && <p className="mb-2 text-sm text-[var(--danger)]">{error}</p>}
@@ -401,11 +664,19 @@ export default function TimetableTab() {
       </form>
 
       <div className="overflow-x-auto rounded-lg border border-[var(--border-strong)]">
-        <table className="w-full table-fixed border-collapse text-sm">
+        {/* table-fixed + w-full alone shrinks every column to fit the
+            viewport on mobile, so the subject/teacher dropdowns and the
+            remove button all get crushed into a few px and nothing is
+            actually scrollable. Giving the table an explicit min-width
+            (each period column gets a real minimum) makes it wider than
+            a phone screen so it overflows this wrapper and the existing
+            overflow-x-auto can do its job — swipe to see later periods
+            instead of squinting at illegible columns. */}
+        <table className="min-w-[1180px] table-fixed border-collapse text-sm sm:w-full sm:min-w-0">
           <colgroup>
             <col className="w-20" />
             {PERIODS.map((p) => (
-              <col key={p.period} />
+              <col key={p.period} className="w-[110px] sm:w-auto" />
             ))}
           </colgroup>
           <thead>
@@ -456,7 +727,7 @@ export default function TimetableTab() {
                             {!subjects.includes(slot.subject) && (
                               <option value={slot.subject}>{slot.subject}</option>
                             )}
-                            {subjects.map((subj) => (
+                            {orderedSubjects.map((subj) => (
                               <option key={subj} value={subj}>
                                 {subj}
                               </option>
@@ -470,18 +741,32 @@ export default function TimetableTab() {
                             ✕
                           </button>
                         </div>
-                        <select
-                          value={slot.teacher_id ?? ''}
-                          onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
-                          className="input w-full px-1 py-0.5 text-xs"
-                        >
-                          <option value="">Unassigned</option>
-                          {teachers.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
+                        {buildBy === 'section' ? (
+                          <select
+                            value={slot.teacher_id ?? ''}
+                            onChange={(e) => updateSlotTeacher(slot.id, e.target.value)}
+                            className="input w-full px-1 py-0.5 text-xs"
+                          >
+                            <option value="">Unassigned</option>
+                            {teachers.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <select
+                            value={slot.section_id}
+                            onChange={(e) => updateSlotSection(slot.id, Number(e.target.value))}
+                            className="input w-full px-1 py-0.5 text-xs"
+                          >
+                            {sections.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {sectionLabel(s)}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     </td>
                   )
@@ -492,7 +777,9 @@ export default function TimetableTab() {
         </table>
       </div>
       {slots.length === 0 && (
-        <p className="mt-3 text-sm text-[var(--muted)]">No periods added for this section yet.</p>
+        <p className="mt-3 text-sm text-[var(--muted)]">
+          {buildBy === 'section' ? 'No periods added for this section yet.' : 'No periods added for this teacher yet.'}
+        </p>
       )}
       </>
       )}
