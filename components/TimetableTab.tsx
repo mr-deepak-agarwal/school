@@ -401,16 +401,15 @@ export default function TimetableTab() {
   // In section mode, once a subject is picked, only offer teachers who:
   // (1) actually teach that subject, (2) teach this section's grade, and
   // (3) are free at this day/period (not already booked with another
-  // class then). Each filter falls back to the wider list if it would
-  // otherwise leave nobody to pick — e.g. no one is tagged for a
-  // non-teacher period like Sports, or nobody has been timetabled or
-  // assigned to this grade at all yet (a brand-new grade's very first
-  // period) — so the dropdown is never left empty because of a
-  // data-quality gap rather than a real clash. Availability is the one
-  // hard constraint that never falls back: a double-booking is a real
-  // problem, not a data gap. Whoever is currently assigned always stays
-  // visible, even if they no longer match, so an existing slot never
-  // shows a blank select.
+  // class then). Only the subject filter falls back to the wider list
+  // when it would otherwise leave nobody to pick — e.g. no one is tagged
+  // for a non-teacher period like Sports — so the dropdown isn't blocked
+  // by that kind of data gap. Grade and availability are hard filters
+  // that never fall back: if nobody's on record as teaching this grade,
+  // or everyone who is happens to be busy, the right answer is an empty
+  // list (still pick-able as "Unassigned"), not a mismatched name.
+  // Whoever is currently assigned always stays visible, even if they no
+  // longer match, so an existing slot never shows a blank select.
   function teachersForSubject(
     subject: string,
     day: string,
@@ -420,10 +419,14 @@ export default function TimetableTab() {
     const bySubject = subject ? teachers.filter((t) => teacherTeachesSubject(t, subject) || t.id === currentTeacherId) : teachers
     const subjectPool = bySubject.length > 0 ? bySubject : teachers
 
+    // Grade is a hard filter, unlike subject above: if nobody's on record
+    // (via an assignment or an existing period) as teaching this grade,
+    // the right answer is an empty list — not "show everyone anyway".
+    // Showing a mismatched teacher because the data was blank was exactly
+    // the bug: it silently pretended the requirement wasn't broken.
     const grade = sections.find((s) => s.id === sectionId)?.class
-    const byGrade =
+    const gradePool =
       grade === undefined ? subjectPool : subjectPool.filter((t) => t.id === currentTeacherId || teacherTeachesGrade(t.id, grade))
-    const gradePool = byGrade.length > 0 ? byGrade : subjectPool
 
     if (period === null) return gradePool
     return gradePool.filter((t) => t.id === currentTeacherId || isTeacherFree(t.id, day, period, sectionId))
