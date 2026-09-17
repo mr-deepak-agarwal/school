@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import type { LeaveRequest, Teacher, TimetableSlot } from '@/lib/types'
+import type { LeaveRequest, Section, Substitution, Teacher, TimetableSlot } from '@/lib/types'
 import { todayISO, dayNameForDate, periodsForHalf } from '@/lib/periods'
 
 // The admin used to land directly inside the Substitutions workflow — a
@@ -13,9 +13,13 @@ import { todayISO, dayNameForDate, periodsForHalf } from '@/lib/periods'
 export default function OverviewTab({ onGoToSubstitutions }: { onGoToSubstitutions: () => void }) {
   const [loading, setLoading] = useState(true)
   const [teacherMap, setTeacherMap] = useState<Record<string, string>>({})
+  const [sectionMap, setSectionMap] = useState<Record<number, string>>({})
   const [leaveToday, setLeaveToday] = useState<LeaveRequest[]>([])
   const [pendingCount, setPendingCount] = useState(0)
   const [coverage, setCoverage] = useState<Record<string, { needed: number; covered: number }>>({})
+  const [dayTimetable, setDayTimetable] = useState<TimetableSlot[]>([])
+  const [subsToday, setSubsToday] = useState<Substitution[]>([])
+  const [shareState, setShareState] = useState<'idle' | 'copied'>('idle')
 
   const date = todayISO()
   const dayName = dayNameForDate(date)
@@ -26,20 +30,25 @@ export default function OverviewTab({ onGoToSubstitutions }: { onGoToSubstitutio
     async function load() {
       setLoading(true)
 
-      const [{ data: teachers }, { data: leave }, { count: pending }, { data: timetable }, { data: subs }] =
+      const [{ data: teachers }, { data: sections }, { data: leave }, { count: pending }, { data: timetable }, { data: subs }] =
         await Promise.all([
           supabase.from('teachers').select('id, name'),
+          supabase.from('sections').select('id, class, section'),
           supabase.from('leave_register').select('*').eq('date', date).eq('status', 'approved').order('id'),
           supabase.from('leave_register').select('id', { count: 'exact', head: true }).eq('status', 'pending').gte('date', date),
-          supabase.from('timetable').select('id, day, period, teacher_id').eq('day', dayName),
-          supabase.from('substitutions').select('id, timetable_id').eq('date', date),
+          supabase.from('timetable').select('id, day, period, section_id, subject, teacher_id').eq('day', dayName),
+          supabase.from('substitutions').select('*').eq('date', date),
         ])
 
       if (cancelled) return
 
       const tMap = Object.fromEntries((teachers ?? []).map((t: Pick<Teacher, 'id' | 'name'>) => [t.id, t.name]))
+      const sMap = Object.fromEntries(
+        ((sections ?? []) as Pick<Section, 'id' | 'class' | 'section'>[]).map((s) => [s.id, `${s.class}${s.section}`])
+      )
       const leaveRows = (leave ?? []) as LeaveRequest[]
-      const coveredTimetableIds = new Set((subs ?? []).map((s: { timetable_id: number }) => s.timetable_id))
+      const subRows = (subs ?? []) as Substitution[]
+      const coveredTimetableIds = new Set(subRows.map((s) => s.timetable_id))
 
       // For each absent teacher, how many of their periods today actually
       // need a substitute (respecting half-day leave) vs how many already
@@ -55,9 +64,12 @@ export default function OverviewTab({ onGoToSubstitutions }: { onGoToSubstitutio
       }
 
       setTeacherMap(tMap)
+      setSectionMap(sMap)
       setLeaveToday(leaveRows)
       setPendingCount(pending ?? 0)
       setCoverage(nextCoverage)
+      setDayTimetable((timetable ?? []) as TimetableSlot[])
+      setSubsToday(subRows)
       setLoading(false)
     }
 
@@ -71,6 +83,63 @@ export default function OverviewTab({ onGoToSubstitutions }: { onGoToSubstitutio
   const totalCovered = Object.values(coverage).reduce((sum, c) => sum + c.covered, 0)
   const totalOpen = totalNeeded - totalCovered
   const allClear = !loading && leaveToday.length === 0 && pendingCount === 0
+
+  // Plain-text summary for sharing (WhatsApp/SMS/etc via the Web Share API,
+  // or clipboard as a fallback) — built from the same data already loaded
+  // for the page, so nothing extra is fetched when the button is pressed.
+  const shareText = useMemo(() => {
+    const lines = [`Substitutions — ${dayName}, ${date}`, '']
+
+    if (leaveToday.length === 0) {
+      lines.push('No one is on leave today.')
+    } else {
+      for (const l of leaveToday) {
+        const half = periodsForHalf(l.half)
+        const slots = dayTimetable
+          .filter((s) => s.teacher_id === l.teacher_id && half.includes(Number(s.period)))
+          .sort((a, b) => Number(a.period) - Number(b.period))
+
+        lines.push(`${teacherMap[l.teacher_id] ?? 'Unknown teacher'} — absent${l.half !== 'full' ? ` (${l.half})` : ''}`)
+
+        if (slots.length === 0) {
+          lines.push('  No periods to cover')
+        } else {
+          for (const slot of slots) {
+            const sub = subsToday.find((s) => s.timetable_id === slot.id)
+            const section = sectionMap[slot.section_id] ?? '—'
+            if (sub) {
+              const subName = teacherMap[sub.substitute_teacher_id] ?? 'someone'
+              lines.push(`  P${slot.period} ${slot.subject} (${section}) → ${subName}`)
+            } else {
+              lines.push(`  P${slot.period} ${slot.subject} (${section}) → not yet assigned`)
+            }
+          }
+        }
+        lines.push('')
+      }
+    }
+
+    lines.push(`${totalCovered}/${totalNeeded} periods covered${totalOpen > 0 ? `, ${totalOpen} still open` : ''}.`)
+    return lines.join('\n')
+  }, [dayName, date, leaveToday, dayTimetable, subsToday, teacherMap, sectionMap, totalCovered, totalNeeded, totalOpen])
+
+  async function handleShare() {
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title: `Substitutions — ${dayName}, ${date}`, text: shareText })
+      } catch {
+        // User cancelled the share sheet — nothing to do.
+      }
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(shareText)
+      setShareState('copied')
+      setTimeout(() => setShareState('idle'), 2000)
+    } catch {
+      // Clipboard blocked (permissions, non-HTTPS, etc.) — nothing more we can do silently.
+    }
+  }
 
   return (
     <div>
@@ -96,9 +165,14 @@ export default function OverviewTab({ onGoToSubstitutions }: { onGoToSubstitutio
           <h2 className="font-display mb-0 text-lg font-semibold">
             {dayName}, {date}
           </h2>
-          <button onClick={onGoToSubstitutions} className="btn-primary btn-sm">
-            Mark someone absent
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleShare} disabled={loading} className="btn-secondary btn-sm">
+              {shareState === 'copied' ? 'Copied!' : 'Share'}
+            </button>
+            <button onClick={onGoToSubstitutions} className="btn-primary btn-sm">
+              Mark someone absent
+            </button>
+          </div>
         </div>
 
         {loading ? (

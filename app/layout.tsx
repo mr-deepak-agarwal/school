@@ -8,6 +8,11 @@ const fraunces = Fraunces({ subsets: ['latin'], weight: ['500', '600', '700'], v
 export const metadata: Metadata = {
   title: 'School Timetable',
   description: 'Timetable, leave, and substitutions',
+  manifest: '/manifest.json',
+}
+
+export const viewport = {
+  themeColor: '#163A28',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
