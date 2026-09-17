@@ -11,6 +11,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim())
 })
 
+// A pass-through fetch handler — this app isn't going offline-first, so it
+// doesn't serve anything from cache, but Chrome's install-prompt heuristics
+// look for a service worker that's actually handling fetches (not just
+// registered for push), so an explicit no-op listener is needed here even
+// though it changes nothing about how requests are handled.
+self.addEventListener('fetch', () => {})
+
 self.addEventListener('push', (event) => {
   let data = { title: 'School Timetable', body: 'You have a new update.', url: '/' }
   try {
